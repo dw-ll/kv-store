@@ -1,0 +1,23 @@
+MECHANISM NOTES
+
+----- CAUSAL DEPENDENCY -----
+valueStore is an object nested in our KVS dictionary. 
+With a <key> as a key to the dictionary, valueStore will be the value coorelated to that given key.
+Inside valueStore are a few lists: values, versions and causalMetadata.
+Values and versions get updated in parallel after it is operating on a request, these lists eventually get 
+returned inside a response object, when we encode into a json object using kvsEncoder.
+These lists either end up at a new replica when it dies and gets booted again, or when a replica requests it.
+causalMetadata gets updated accordingly when an operation is about to send a response back to a client/replica.
+To track and enforce causal consistency, we check an incoming causalMetadata list and treat is as the explicit causal dependency
+list given in the assignment spec.
+We then examine another local list named "history". While history doesn't match causalMetadata, we have to run queued requests at a given replica.
+
+
+
+----- DOWN REPLICAS -----
+To treat down replicas, we simply look for timeouts. 
+If a timeout occurs, we first have to call on repairView to adjust the view of the other replicas accordingly, which is removing the down replica from the view.
+If that replica, or any other replica boots while others are running, we do the negative case of above, 
+we fill each other replica's view with the new replicas socket address and then have that new replica send a get request
+to our /key-value-store/ endpoint to retreive the entire KVS at a replica that is healthy.
+With this, our new replica is functioning and has a live record of the store. The other replicas are also aware of this new replica as it is in their view at this point.
