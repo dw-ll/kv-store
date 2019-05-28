@@ -18,5 +18,5 @@ EXPOSE 8080
 RUN pip install --trusted-host pypi.python.org -r requirements.txt
 
 # run the file for the REST servoce
-CMD ["python", "-u","asg2.py"]
+CMD ["python", "-u","kvs.py"]
 

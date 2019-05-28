@@ -8,6 +8,7 @@ import time
 import os
 import requests
 import random
+import hashlib
 
 
 class valueStore:
@@ -47,6 +48,7 @@ class kvsEncoder(json.JSONEncoder):
 history = [] # Contains a list of version ids of already run commands
 kvs = {}
 kvs_version = {}
+line = {}
 view = os.environ['VIEW']
 viewArray = view.split(",")
 replicaEnviroment = os.environ
@@ -100,12 +102,19 @@ def putFunctd(key):
     global viewArray
     global view
     global history
-  
+    global line
+    
     value = ""
     causalMetadata = []
     version = ""
     data = request.get_json()
     isUpdating = key in kvs
+
+    print("===CURRENT HISTORY: ")
+    print(history)
+
+    print("===CURRENT LINE: ")
+    print(line)
 
     # Retreive passed info from data json
     # Check key length
@@ -164,12 +173,18 @@ def putFunctd(key):
     if causalMetadata:  # Casually dependent  
         print("Request *is* casually dependent on:\n")
         print(causalMetadata)
+        print("=== THIS IS OUR HISTORY: " )
+        print(history)
         for v in causalMetadata:
             while not (v in history):
                 print("Request is *not* in causal order!! Correcting...")
                 time.sleep(2)
                 #TODO: run this request later
-                # Save version_id: (key, data, requester)         
+                # Save version_id: (key, data, requester) 
+                nextUp = line[v]
+                print(next)
+
+                  
     
     # Update or store key and value
     # Store version into history
@@ -185,6 +200,7 @@ def putFunctd(key):
         forward(key, value, version, causalMetadata, "PUT")
 
     # Respond to Client
+    line[version] = request.data
     kvs[key].causalMetadata.append(version)
     if isUpdating:
         resp = {
