@@ -2,7 +2,7 @@
 # as I have not had any serious Docker experience in the past.
 
 # we need a base image for python
-FROM python:3
+FROM python:3.7
 
 # set a working directory
 WORKDIR /app
@@ -18,5 +18,5 @@ EXPOSE 8080
 RUN pip install --trusted-host pypi.python.org -r requirements.txt
 
 # run the file for the REST servoce
-CMD ["python3", "-u","kvs.py"]
+CMD ["python3","kvs.py"]
 
