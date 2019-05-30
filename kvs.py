@@ -56,6 +56,11 @@ class ViewList:
     def __repr__(self):
         x = ","
         x = x.join(self.viewArray)
+        if x:
+            x = self.ownSocket + "," + x
+        else:
+            x = self.ownSocket
+
         return x
 
     def __getitem__(self, key):
@@ -245,6 +250,66 @@ class KeyValueStore(HTTPEndpoint):
                 "message": "Error in GET"}
             return JSONResponse(message, status_code=404, media_type='application/json')
 
+@app.route('/key-value-store-view/')
+class KVSView(HTTPEndpoint):
+    async def get(self, request):
+        message = {"message": "View retreived successfully",
+                    "view": repr(view)}
+        return JSONResponse(message, status_code=200, media_type='application/json')
+    async def put(self, request):
+        global view
+        # Retreive the new address
+        # if the data is empty, error
+        # if the data already exists in our view, error
+        data = await request.json()
+        if 'socket-address' in data:
+            newAddress = data['socket-address']
+        else:
+            message = {"error": "Value is missing",
+                       "message": "Error in PUT"}
+            return JSONResponse(message, status_code=400, media_type='application/json')
+
+        if newAddress in view:
+            message = {"error": "Socket address already exists in the view",
+                        "message": "Error in PUT"}
+            return JSONResponse(message, status_code=404, media_type='application/json')
+
+        view.add(newAddress)
+
+        message = {"message": "Replica added successfully to the view"}
+        return JSONResponse(message, status_code=200, media_type='application/json')
+    async def delete(self, request):
+        # Retreive the address to delete
+        # If the data is empty, error
+        global view
+
+        data = await request.json()
+        if 'socket-address' in data:
+            delAddress = data['socket-address']
+        else:
+            # Case socket address is not in data
+            message = {"error": "Value is missing", "message": "Error in DELETE"}
+            return JSONResponse(message, status_code=400, media_type='application/json')
+
+        # Check if socket address does exist, delete and return
+        if delAddress in view:
+            # Delete
+            view.remove(delAddress)
+
+            # Return
+            message = {"message": "Replica deleted successfully from the view"}
+            return JSONResponse(message, status_code=200, media_type='application/json')
+
+        # Else socket is not in view, return error
+        message = {"error": "Socket address does not exist in the view",
+                "message": "Error in DELETE"}
+        return JSONResponse(message, status_code=404, media_type='application/json')
+
+ 
+ 
+
+
+
 # The async part of the keyvaluestore put
 #   checks if its allowed to run yet,
 #       if not it pauses and allows
@@ -293,21 +358,22 @@ def isInCausalOrder(causalMetadata):
 # if request should be fowarded,
 # fowards PUT at (key, vs) to all
 # replicas in view
+
 async def foward(key, vs, isFromClient, reqType):
     if isFromClient:
-        value = vs.getValue()
-        version = vs.getVersion()
-        causalMetadata = vs.causalMetadata
-        logging.debug("putFoward at: Key: %s Value: %s View: %s", key, value, view)
+        logging.debug("putFoward at: Key: %s ReqType: %s View: %s", key, reqType, view)
         if reqType == "PUT":
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
-                                json={'value': value,
-                                      'version': version,
-                                      'causal-metadata': causalMetadata}) for address in view)
+                                json={'value': vs.getValue(),
+                                      'version': vs.getVersion(),
+                                      'causal-metadata': vs.causalMetadata}) for address in view)
         elif reqType == "DELETE":
             rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
-                    json={'version': version,
-                          'causal-metadata': causalMetadata}) for address in view)
+                    json={'version': vs.getVersion(),
+                          'causal-metadata': vs.causalMetadata}) for address in view)
+        elif reqType == "VIEW_DELETE":
+            rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
+                    json={'socket-address': vs}) for address in view)
         else:
             logging.error("foward reqType invalid!!!")
         grequests.map(rs, exception_handler=exception_handler, gtimeout=TIMEOUT_TIME)
@@ -317,6 +383,14 @@ async def foward(key, vs, isFromClient, reqType):
           
 def exception_handler(request, exception):
     logging.warning("Replica may be down! Timeout on address: %s", request.url)
+    repairView(request.url)
+
+def repairView(downSocket):
+    global view
+    logging.warning("%s is down, adjusting view", downSocket)
+    view.remove(downSocket)
+    foward(None, downSocket, True, "VIEW_DELETE")
+
 
 if __name__ == '__main__':
     uvicorn.run(app, host='0.0.0.0', port=8080)
