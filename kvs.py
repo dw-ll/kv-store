@@ -16,7 +16,8 @@ class ValueStore:
         self.versions = []
         self.values = []
         self.causalMetadata = cm
-        self.update(value, version)
+        self.values.append(value)
+        self.versions.append(version)
 
     def getValue(self, index=-1):
         return self.values[index]
@@ -24,14 +25,14 @@ class ValueStore:
     def getVersion(self, index=-1):
         return self.versions[index]
 
-    def update(self, value, version):
-        self.values.append(value)
-        self.versions.append(version)
+    def update(self, vs):
+        self.values.append(vs.getValue())
+        self.versions.append(vs.getVersion())
+        self.causalMetadata.append(vs.causalMetadata)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__,
                           sort_keys=True, indent=4)
-
 
 class ViewList:
     def __init__(self, startString, ownSocket):
@@ -80,15 +81,15 @@ view = ViewList(os.environ['VIEW'], OWN_SOCKET)
 
 
 
-# TODO:  delete, views
+# TODO: views
 
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
     # Put handler for KeyValueStore endpoint
     #   Loads data from reuqest
-    #   Sets up background tasks to
-    #       Store value in key
-    #       TODO: Foward changes if message is from a client
+    #   Sets tasks to
+    #        Store value in key - (Await)
+    #        Foward changes if message is from a client - (Background)
     #   Returns to the client
     async def put(self, request):
         # First we set up our variables
@@ -122,6 +123,8 @@ class KeyValueStore(HTTPEndpoint):
                 "No Version in data, generating a unique version id: %s", version)
         if 'causal-metadata' in data:  # causalMetadata
             causalMetadata = data['causal-metadata']
+            if causalMetadata == "": # Case empty string is passed
+                causalMetadata = []
         senderSocket = request.client.host + ":8080"
         logging.debug("senderSocket check: %s in view: %s, %s", senderSocket, view, senderSocket in view)
 
@@ -132,8 +135,8 @@ class KeyValueStore(HTTPEndpoint):
         # the request is completed
         # https://www.starlette.io/background/
         vs = ValueStore(value, version, causalMetadata.copy())
-        isUpdating = await putData(key, vs)
-        task = BackgroundTask(putFoward, key=key, vs=vs, isFromClient=senderSocket not in view)
+        isUpdating = await dataMgmt(key, vs)
+        task = BackgroundTask(foward, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
 
         # Finally we return
         causalMetadata.append(version)
@@ -157,6 +160,71 @@ class KeyValueStore(HTTPEndpoint):
                                 status_code=201,
                                 background=task,
                                 media_type='application/json')
+    async def delete(self, request):
+        # First we set up our variables
+        #   key: requested key
+        #   value: requested value to add/update
+        #   version: unique id for the funtion; used to ensure causality
+        #   causalMetadata: list of versions that must be completed before
+        #                           value is added to the key
+
+        try: 
+            data = await request.json()
+        except:
+            data = ""
+
+        key = request.path_params['key']
+
+        version = ""
+        causalMetadata = []
+
+        if len(key) > 50:  # key
+            message = {"error": "Key is too long",
+                       "message": "Error in DELETE"}
+            return JSONResponse(message, status_code=400, media_type='application/json')
+        if 'version' in data:  # version
+            version = data['version']
+        else:
+            version = random.randint(0, 1000)
+            logging.info(
+                "No Version in data, generating a unique version id: %s", version)
+        if 'causal-metadata' in data:  # causalMetadata
+            causalMetadata = data['causal-metadata']
+            if causalMetadata == "": # Case empty string is passed
+                causalMetadata = []
+        senderSocket = request.client.host + ":8080"
+        logging.debug("senderSocket check: %s in view: %s, %s", senderSocket, view, senderSocket in view)
+
+        logging.debug("===Delete at %s", key)
+
+        # Second, we set up the task that will update the value,
+        # and the fowarding that will run in the background after
+        # the request is completed
+        # https://www.starlette.io/background/
+        vs = ValueStore(None, version, causalMetadata.copy())
+        isDeleting = await dataMgmt(key, vs)
+        task = BackgroundTask(foward, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="DELETE")
+
+        # Finally we return
+        causalMetadata.append(version)
+        if isDeleting:
+            message = {
+                "message": "Deleted successfully",
+                "version": version,
+                "causal-metadata": acausalMetadata
+            }
+            return JSONResponse(message,
+                                status_code=200,
+                                background=task,
+                                media_type='application/json')
+        else:
+            message = {
+                "message": "Error in DELETE",
+                "error": "Key does not exist"
+            }
+            return JSONResponse(message,
+                                status_code=404,
+                                media_type='application/json')
     
     # Get Handler for key value store endpoint
     #   returns to the client with the current state of the key
@@ -175,7 +243,7 @@ class KeyValueStore(HTTPEndpoint):
             message = {
                 "error": "Key does not exist",
                 "message": "Error in GET"}
-        return JSONResponse(message, status_code=404, media_type='application/json')
+            return JSONResponse(message, status_code=404, media_type='application/json')
 
 # The async part of the keyvaluestore put
 #   checks if its allowed to run yet,
@@ -183,11 +251,12 @@ class KeyValueStore(HTTPEndpoint):
 #       other code to run
 # Returns True if put is an update
 #         False if put is an add
-async def putData(key, vs):
+async def dataMgmt(key, vs):
+    global history
     value = vs.getValue()
     version = vs.getVersion()
     causalMetadata = vs.causalMetadata
-    logging.debug("+++PutData started at:\n   Key: %s\n   Value: %s\n   CM:%s",
+    logging.debug("+++dataMgmt started at:\n   Key: %s\n   Value: %s\n   CM:%s",
                   key, value, causalMetadata)
     while(not isInCausalOrder(causalMetadata)):
         logging.debug("%s not in %s, waiting request", causalMetadata, history)
@@ -195,16 +264,18 @@ async def putData(key, vs):
     history.append(version)
     logging.info("Added %s to history", version)
     logging.debug("New History: %s", history)
-                 
+
+    vs.causalMetadata.append(version)             
     if key in kvs:
-        kvs[key].update(value, version)
-        logging.info("---PutData finished with kvs UPDATED: %s => %s",
+        kvs[key].update(vs)
+        logging.info("---PutData finished with True: %s => %s",
             key, kvs[key].getValue())
         return True
     else:
-        kvs[key] = vs
-        logging.info("---PutData finished with kvs ADDED: %s => %s",
-            key, kvs[key].getValue())
+        if value:
+            kvs[key] = vs
+        logging.info("---dataMgmt finished with False: %s => %s",
+                key, value) 
         return False
 
 
@@ -220,20 +291,26 @@ def isInCausalOrder(causalMetadata):
     return True
 
 # if request should be fowarded,
-# fowards put at key, vs to all
+# fowards PUT at (key, vs) to all
 # replicas in view
-async def putFoward(key, vs, isFromClient):
+async def foward(key, vs, isFromClient, reqType):
     if isFromClient:
         value = vs.getValue()
         version = vs.getVersion()
         causalMetadata = vs.causalMetadata
         logging.debug("putFoward at: Key: %s Value: %s View: %s", key, value, view)
-
-        rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
-                            json={'value': value,
-                                  'version': version,
-                                  'causal-metadata': causalMetadata}) for address in view)
-        grequests.map(rs, exception_handler=exception_handler)
+        if reqType == "PUT":
+            rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
+                                json={'value': value,
+                                      'version': version,
+                                      'causal-metadata': causalMetadata}) for address in view)
+        elif reqType == "DELETE":
+            rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
+                    json={'version': version,
+                          'causal-metadata': causalMetadata}) for address in view)
+        else:
+            logging.error("foward reqType invalid!!!")
+        grequests.map(rs, exception_handler=exception_handler, gtimeout=TIMEOUT_TIME)
         logging.debug("putFoward Finished")
     else:
         logging.debug("request is from a replica (not a client), not fowarding")
