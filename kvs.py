@@ -9,6 +9,7 @@ import logging
 import asyncio
 import random
 import os
+import json
 
 
 class ValueStore:
@@ -31,8 +32,28 @@ class ValueStore:
         self.causalMetadata.append(vs.causalMetadata)
 
     def toJSON(self):
-        return json.dumps(self, default=lambda o: o.__dict__,
-                          sort_keys=True, indent=4)
+        return json.dumps(self, default=lambda o: o.__dict__, 
+            sort_keys=True, indent=4)
+        # return dict(
+        #     versions=self.versions,
+        #     values=self.values,
+        #     causalMetadata=self.causalMetadata
+        #     )
+        #return json.dumps(self, default=lambda o: o.__dict__,
+        #                  sort_keys=True, indent=4)
+class kvsEncoder(json.JSONEncoder):
+    def default(self,obj):
+        if isinstance(obj, ValueStore):
+            return {"values":obj.values,
+                    "versions" : obj.versions,
+                    "causalMetadata" : obj.causalMetadata}
+        return kvsEncoder.default(self,obj)
+
+    def generate(self):
+        # self.casualMetadata.append(self.version)
+        self.version = self.version + 1
+
+
 
 class ViewList:
     def __init__(self, startString, ownSocket):
@@ -86,7 +107,7 @@ view = ViewList(os.environ['VIEW'], OWN_SOCKET)
 
 
 
-# TODO: views
+# TODO: views startup
 
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
@@ -305,7 +326,18 @@ class KVSView(HTTPEndpoint):
                 "message": "Error in DELETE"}
         return JSONResponse(message, status_code=404, media_type='application/json')
 
- 
+@app.route('/store/')
+async def store(request):
+    tView = list(view)
+    tView.append(view.ownSocket)
+    message = {
+        "kvs": json.dumps(kvs, cls=kvsEncoder),
+        "history": history,
+        "view": tView
+    }
+    return JSONResponse(message, status_code=200, media_type='application/json')
+    # TODO: Check for pending requests
+     
  
 
 
@@ -391,6 +423,12 @@ def repairView(downSocket):
     view.remove(downSocket)
     foward(None, downSocket, True, "VIEW_DELETE")
 
+def retrieveStore():
+    logging.warning("Running Retrieve Store")
+
+@app.on_event('startup')
+async def startup():
+    retrieveStore()
 
 if __name__ == '__main__':
     uvicorn.run(app, host='0.0.0.0', port=8080)
