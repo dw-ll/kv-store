@@ -17,6 +17,7 @@ import hashlib
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
 sha = hashlib.sha256()
+ipSHA = hashlib.sha256()
 
 
 # Constants
@@ -24,6 +25,10 @@ BASE = 'http://'
 KVS_ENDPOINT = '/key-value-store/'
 VIEW_ENDPOINT = '/key-value-store-view/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
+identifier = ipSHA.update(OWN_SOCKET.encode('utf-8'))
+logging.debug("Identifier for "+OWN_SOCKET+ "= " + str(ipSHA.hexdigest()))
+hashedGroupID = (hash(identifier) %2) + 1
+logging.debug(OWN_SOCKET + "will be in replica group:"+ str(hashedGroupID))
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 
