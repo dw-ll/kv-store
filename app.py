@@ -10,10 +10,13 @@ import json
 import random
 import kvstorage
 import views
+import hashlib
 
 # Setup
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
+sha = hashlib.sha256()
+
 
 # Constants
 BASE = 'http://'
@@ -45,6 +48,9 @@ class KeyValueStore(HTTPEndpoint):
         value = ""
         version = ""
         causalMetadata = []
+        hashedKey = sha.update(key.encode('utf-8'))
+        logging.debug(key + " hashed to "+ sha.hexdigest())
+
 
         if len(key) > 50:  # key
             message = {"error": "Key is too long",
@@ -117,6 +123,8 @@ class KeyValueStore(HTTPEndpoint):
             data = ""
 
         key = request.path_params['key']
+        hashedKey = sha.update(key.encode('utf-8'))
+        logging.debug(key + " hashed to " + sha.hexdigest())
 
         version = ""
         causalMetadata = []
@@ -156,7 +164,7 @@ class KeyValueStore(HTTPEndpoint):
             message = {
                 "message": "Deleted successfully",
                 "version": version,
-                "causal-metadata": acausalMetadata
+                "causal-metadata": causalMetadata
             }
             return JSONResponse(message,
                                 status_code=200,
@@ -175,6 +183,8 @@ class KeyValueStore(HTTPEndpoint):
     #   returns to the client with the current state of the key
     async def get(self, request):
         key = request.path_params['key']
+        hashedKey = sha.update(key.encode('utf-8'))
+        logging.debug(key + " hashed to " + sha.hexdigest())
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
