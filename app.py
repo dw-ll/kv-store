@@ -10,6 +10,7 @@ import json
 import random
 import kvstorage
 import views
+import shard
 import hashlib
 
 # Setup
@@ -49,7 +50,9 @@ class KeyValueStore(HTTPEndpoint):
         version = ""
         causalMetadata = []
         hashedKey = sha.update(key.encode('utf-8'))
-        logging.debug(key + " hashed to "+ sha.hexdigest())
+        hexEncodedKey = sha.hexdigest()
+        logging.debug(key + " hashed to "+ hexEncodedKey)
+        shard.lookup(hexEncodedKey)
 
 
         if len(key) > 50:  # key
