@@ -18,20 +18,21 @@ logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
 sha = hashlib.sha256()
 ipSHA = hashlib.sha256()
-group1 = shard.ReplicaGroup(node_id=1)
-group2 = shard.ReplicaGroup(node_id=2)
 
 # Constants
 BASE = 'http://'
 KVS_ENDPOINT = '/key-value-store/'
 VIEW_ENDPOINT = '/key-value-store-view/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
+shard_count = os.environ['SHARD_COUNT']
+groupList = []
 identifier = ipSHA.update(OWN_SOCKET.encode('utf-8'))
-logging.debug("Identifier for "+OWN_SOCKET+ "= " + str(ipSHA.hexdigest()))
-hashedGroupID = (hash(identifier) %2) + 1
-logging.debug(OWN_SOCKET + "will be in replica group:"+ str(hashedGroupID))
+logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
+hashedGroupID = (hash(identifier) % 2) + 1
+logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
+
 
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
@@ -39,7 +40,7 @@ class KeyValueStore(HTTPEndpoint):
     #   Loads data from reuqest
     #   Sets tasks to
     #        Store value in key - (Await)
-    #        Foward changes if message is from a client - (Background)
+    #        forwarding changes if message is from a client - (Background)
     #   Returns to the client
     async def put(self, request):
         # First we set up our variables
@@ -57,9 +58,8 @@ class KeyValueStore(HTTPEndpoint):
         causalMetadata = []
         hashedKey = sha.update(key.encode('utf-8'))
         hexEncodedKey = sha.hexdigest()
-        logging.debug(key + " hashed to "+ hexEncodedKey)
-        shard.lookup(hexEncodedKey)
-
+        logging.debug(key + " hashed to " + hexEncodedKey)
+        destinationShard = shard.lookup(hexEncodedKey)
 
         if len(key) > 50:  # key
             message = {"error": "Key is too long",
@@ -87,13 +87,13 @@ class KeyValueStore(HTTPEndpoint):
         logging.debug("===Put at %s : %s", key, value)
 
         # Second, we set up the task that will update the value,
-        # and the fowarding that will run in the background after
+        # and the forwardinging that will run in the background after
         # the request is completed
         # https://www.starlette.io/background/
         vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
         isUpdating = await kvstorage.dataMgmt(key, vs)
         task = BackgroundTask(
-            foward, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
+            forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
 
         # Finally we return
         causalMetadata.append(version)
@@ -159,13 +159,13 @@ class KeyValueStore(HTTPEndpoint):
         logging.debug("===Delete at %s", key)
 
         # Second, we set up the task that will update the value,
-        # and the fowarding that will run in the background after
+        # and the forwarding that will run in the background after
         # the request is completed
         # https://www.starlette.io/background/
         vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
         isDeleting = await kvstorage.dataMgmt(key, vs)
         task = BackgroundTask(
-            foward, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="DELETE")
+            forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="DELETE")
 
         # Finally we return
         causalMetadata.append(version)
@@ -282,14 +282,14 @@ async def store(request):
     return JSONResponse(message, status_code=200, media_type='application/json')
     # TODO: Check for pending requests
 
-# if request should be fowarded,
-# fowards PUT at (key, vs) to all
+# if request should be forwardinged,
+# forwardings PUT at (key, vs) to all
 # replicas in view
 
 
-async def foward(key, vs, isFromClient, reqType):
+async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
-        logging.debug("putFoward at: Key: %s ReqType: %s View: %s",
+        logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
                       key, reqType, view)
         if reqType == "PUT":
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
@@ -304,13 +304,13 @@ async def foward(key, vs, isFromClient, reqType):
             rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
                                    json={'socket-address': vs}) for address in view)
         else:
-            logging.error("foward reqType invalid!!!")
+            logging.error("forwarding reqType invalid!!!")
         grequests.map(rs, exception_handler=exception_handler,
                       gtimeout=TIMEOUT_TIME)
-        logging.debug("putFoward Finished")
+        logging.debug("putforwarding Finished")
     else:
         logging.debug(
-            "request is from a replica (not a client), not fowarding")
+            "request is from a replica (not a client), not forwardinging")
 
 
 def exception_handler(request, exception):
@@ -329,10 +329,37 @@ def repairView(downSocket):
     app.forward(None, downSocket, True, "VIEW_DELETE")
 
 
+async def initChord():
+    logging.debug("Chord is being initialized. Shard count: %s", shard_count)
+    logging.debug("About to add replica groups.")
+    for i in range(shard_count):
+        logging.debug("Adding a replica group with id %s",i)
+        groupList.append(shard.ReplicaGroup(i, shard_count, [], 0, {}))
+    logging.debug(OWN_SOCKET + " is going to group " + hashedGroupID)
+    groupList[hashedGroupID-1].incrementKeyCount
+    groupList[hashedGroupID-1].addGroupMember(OWN_SOCKET)
+    for other in view:
+        hasher = hashlib.sha256()
+        otherHash = hasher.update(other.encode('utf-8'))
+        logging.debug("Identifier for "+other + "= " + str(hasher.hexdigest()))
+        hasherGroup = (hash(identifier) % 2) + 1
+        logging.debug(other + " is going to group "+hasherGroup)
+        if hasherGroup == 1:
+            logging.debug("")
+            groupList[0].addGroupMember(other)
+        else:
+            groupList[1].addGroupMember(other)
+
+    logging.debug("Members of group 1: %s", groupList[0].getReplicas())
+    logging.debug("Members of group 2: %s", groupList[1].getReplicas())
+
+
 # TODO: views startup
 @app.on_event('startup')
 async def startup():
+    await initChord()
     retrieveStore()
+  
 
 if __name__ == '__main__':
     uvicorn.run(app, host='0.0.0.0', port=8080)
