@@ -18,7 +18,8 @@ logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
 sha = hashlib.sha256()
 ipSHA = hashlib.sha256()
-
+group1 = shard.ReplicaGroup(node_id=1)
+group2 = shard.ReplicaGroup(node_id=2)
 
 # Constants
 BASE = 'http://'

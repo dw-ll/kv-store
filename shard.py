@@ -12,6 +12,7 @@ class ReplicaGroup:
         self.shard_id_members = members
         self.key_count = keys
         self.finger_table = {}
+        self.successor = 1 if node_id == 2 else 2
 
     def getReplicaGroupID(self):
         return self.shard_id
@@ -24,9 +25,13 @@ class ReplicaGroup:
 
     def getCountOfReplicas(self):
         return self.keys
+    def incrementKeyCount(self):
+        self.key_count +=1
+    
+
 
 def lookup(hashed):
     logging.debug("Looking up replica group for " + hashed)
-    groupID = hash(hashed) % 2 
+    groupID = (hash(hashed) % 2) + 1
     logging.debug(hashed + "to be put at group:"+ str(groupID))
     return groupID
