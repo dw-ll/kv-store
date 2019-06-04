@@ -20,20 +20,24 @@ import math
 # Setup
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
-sha = hashlib.sha256()
+keySha = hashlib.sha256()
+procSha = hashlib.sha256()
+
 
 
 # Constants
 BASE = 'http://'
 KVS_ENDPOINT = '/key-value-store/'
 VIEW_ENDPOINT = '/key-value-store-view/'
+SHARD_ENDPOINT = '/key-value-store-shard/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
 shard_count = os.environ['SHARD_COUNT']
+# List of ReplicaGroup objects
 groupList = []
-# identifier = ipSHA.update(OWN_SOCKET.encode('utf-8'))
-#logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
- # hashedGroupID = (hash(identifier) % 2) + 1
-#logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
+# Hashing for this specific process.
+identifier = procSha.update(OWN_SOCKET.encode('utf-8'))
+procNodeID = (hash(identifier) % 2) + 1
+
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 
@@ -55,13 +59,13 @@ class KeyValueStore(HTTPEndpoint):
         #                           value is added to the key
 
         data = await request.json()
-
+        
         key = request.path_params['key']
         value = ""
         version = ""
         causalMetadata = []
-        hashedKey = sha.update(key.encode('utf-8'))
-        hexEncodedKey = sha.hexdigest()
+        hashedKey = keySha.update(key.encode('utf-8'))
+        hexEncodedKey = keySha.hexdigest()
         #logging.debug(key + " hashed to " + hexEncodedKey)
         destinationShard = shard.lookup(hexEncodedKey)
 
@@ -290,6 +294,30 @@ async def store(request):
 # forwardings PUT at (key, vs) to all
 # replicas in view
 
+# Return the Replica Group ID that this process belongs to.
+@app.route('/key-value-store-shard/node-shard-id')
+def getNodeID():
+    message = {
+        "message": "Shard ID of the node retrieved successfully", 
+        "shard-id": procNodeID}
+    return JSONResponse(message,status_code=200,media_type='application/json')
+    
+
+@app.route('/key-value-store-shard/shard-id-members/{id}')
+def getGroupMembers(request):
+    
+    message = {"message": "Members of shard ID retrieved successfully", 
+    "shard-id-members":groupList[request.path_params['id']-1].getReplicas()}
+    return JSONResponse(message,status_code=200,media_type='application/json')
+
+
+@app.route('/key-value-store-shard/shard-id-key-count/{id}')
+def getNumKeys(request):
+    message = {"message": "Key count of shard ID retrieved successfully",
+               "shard-id-key-count": groupList[request.path_params['id']-1].getReplicas()}
+    return JSONResponse(message,status_code=200,media_type='application/json')
+
+
 
 async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
@@ -361,14 +389,16 @@ def initChord(view):
         hasherGroup = (hash(otherHash) % 2) + 1
         logging.debug(other + " is going to group "+str(hasherGroup))
         if hasherGroup == 1:
-            logging.debug("adding " + other + " to replica group 1")
+            logging.debug("adding " + other + " to replica group.")
             groupList[0].addGroupMember(other)
         else:
-            logging.debug("adding " + other + " to replica group 1")
+            logging.debug("adding " + other + " to replica group.")
             groupList[1].addGroupMember(other)
 
-    logging.debug("Members of group 1: %s", groupList[0].getReplicas())
-    logging.debug("Members of group 2: %s", groupList[1].getReplicas())
+    list1 = groupList[0].getReplicas()
+    list2 = groupList[1].getReplicas()
+    logging.debug("Members of group 1: " + list1)
+    logging.debug("Members of group 2: " + list2)
 
 
 # TODO: views startup
