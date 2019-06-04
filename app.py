@@ -2,7 +2,10 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.background import BackgroundTask
 from starlette.endpoints import HTTPEndpoint
+
 import uvicorn
+import uvicorn.lifespan.on
+
 import grequests
 import logging
 import os
@@ -12,12 +15,13 @@ import kvstorage
 import views
 import shard
 import hashlib
+import math
 
 # Setup
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
 sha = hashlib.sha256()
-ipSHA = hashlib.sha256()
+
 
 # Constants
 BASE = 'http://'
@@ -26,10 +30,10 @@ VIEW_ENDPOINT = '/key-value-store-view/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
 shard_count = os.environ['SHARD_COUNT']
 groupList = []
-identifier = ipSHA.update(OWN_SOCKET.encode('utf-8'))
-logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
-hashedGroupID = (hash(identifier) % 2) + 1
-logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
+# identifier = ipSHA.update(OWN_SOCKET.encode('utf-8'))
+#logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
+ # hashedGroupID = (hash(identifier) % 2) + 1
+#logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 
@@ -58,7 +62,7 @@ class KeyValueStore(HTTPEndpoint):
         causalMetadata = []
         hashedKey = sha.update(key.encode('utf-8'))
         hexEncodedKey = sha.hexdigest()
-        logging.debug(key + " hashed to " + hexEncodedKey)
+        #logging.debug(key + " hashed to " + hexEncodedKey)
         destinationShard = shard.lookup(hexEncodedKey)
 
         if len(key) > 50:  # key
@@ -329,25 +333,38 @@ def repairView(downSocket):
     app.forward(None, downSocket, True, "VIEW_DELETE")
 
 
-async def initChord():
+def initChord(view):
+    ipSHA = hashlib.sha256()
     logging.debug("Chord is being initialized. Shard count: %s", shard_count)
     logging.debug("About to add replica groups.")
-    for i in range(shard_count):
-        logging.debug("Adding a replica group with id %s",i)
-        groupList.append(shard.ReplicaGroup(i, shard_count, [], 0, {}))
-    logging.debug(OWN_SOCKET + " is going to group " + hashedGroupID)
+    logging.debug("Adding a replica group with id")
+    r1 = shard.ReplicaGroup(1,shard_count,[],0,{})
+    r2 = shard.ReplicaGroup(2, shard_count, [], 0, {})
+    groupList.append(r1)
+    groupList.append(r2)
+    logging.debug("groupList had elements added, r1 and r2.")
+    addr = os.environ['SOCKET_ADDRESS']
+    logging.debug("addr is "+ addr)
+    procID = ipSHA.update(addr.encode('utf-8'))
+    logging.debug("identifier is " + str(ipSHA.hexdigest()))
+    #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
+    hashedGroupID = (hash(procID) % 2) + 1
+    #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
+    logging.debug(addr + " is going to group " + str(hashedGroupID))
     groupList[hashedGroupID-1].incrementKeyCount
     groupList[hashedGroupID-1].addGroupMember(OWN_SOCKET)
+    logging.debug(view)
     for other in view:
         hasher = hashlib.sha256()
         otherHash = hasher.update(other.encode('utf-8'))
-        logging.debug("Identifier for "+other + "= " + str(hasher.hexdigest()))
-        hasherGroup = (hash(identifier) % 2) + 1
-        logging.debug(other + " is going to group "+hasherGroup)
+        logging.debug("Identifier for "+other + " = " + str(hasher.hexdigest()))
+        hasherGroup = (hash(otherHash) % 2) + 1
+        logging.debug(other + " is going to group "+str(hasherGroup))
         if hasherGroup == 1:
-            logging.debug("")
+            logging.debug("adding " + other + " to replica group 1")
             groupList[0].addGroupMember(other)
         else:
+            logging.debug("adding " + other + " to replica group 1")
             groupList[1].addGroupMember(other)
 
     logging.debug("Members of group 1: %s", groupList[0].getReplicas())
@@ -357,9 +374,13 @@ async def initChord():
 # TODO: views startup
 @app.on_event('startup')
 async def startup():
-    await initChord()
+    global view
+
+    initChord(view)
     retrieveStore()
+   
+
   
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=8080)
+    uvicorn.run(app, host='0.0.0.0', port=8080, lifespan = "auto" )
