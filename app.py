@@ -2,10 +2,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.background import BackgroundTask
 from starlette.endpoints import HTTPEndpoint
-
 import uvicorn
-import uvicorn.lifespan.on
-
 import grequests
 import logging
 import os
@@ -64,10 +61,14 @@ class KeyValueStore(HTTPEndpoint):
         value = ""
         version = ""
         causalMetadata = []
+        reqType = request
         hashedKey = keySha.update(key.encode('utf-8'))
         hexEncodedKey = keySha.hexdigest()
-        #logging.debug(key + " hashed to " + hexEncodedKey)
+        logging.debug(key + " hashed to " + hexEncodedKey)
         destinationShard = shard.lookup(hexEncodedKey)
+       
+      
+       
 
         if len(key) > 50:  # key
             message = {"error": "Key is too long",
@@ -78,53 +79,81 @@ class KeyValueStore(HTTPEndpoint):
         else:
             message = {"error": "Value is missing", "message": "Error in PUT"}
             return JSONResponse(message, status_code=400, media_type='application/json')
-        if 'version' in data:  # version
-            version = data['version']
+        # the key in the request didn't hash into our group id, we have to redirect 
+        # it to the proper replica group rather than process it ourselves.
+        # we also are going to be responsible for sending the repsone back 
+        # to the client.
+        if(destinationShard != procNodeID):
+            logging.debug("this key is not in our shard.")
+            if 'version' in data:  # version
+                version = data['version']
+            else:
+                version = random.randint(0, 1000)
+                logging.info(
+                    "No Version in data, generating a unique version id: %s", version)
+            if 'causal-metadata' in data:  # causalMetadata
+                causalMetadata = data['causal-metadata']
+                if causalMetadata == "":  # Case empty string is passed
+                    causalMetadata = []
+            senderSocket = request.client.host + ":8080"
+            logging.debug("senderSocket check: %s in view: %s, %s",
+                          senderSocket, view, senderSocket in view)
+
+            logging.debug("===Put at %s : %s", key, value)
+
+            await forwarding(key=key,vs=version,isFromClient=senderSocket not in view,reqType="PUT")
+
+
+        # the key hashed out to the proper group id, process and forward like usual.
         else:
-            version = random.randint(0, 1000)
-            logging.info(
-                "No Version in data, generating a unique version id: %s", version)
-        if 'causal-metadata' in data:  # causalMetadata
-            causalMetadata = data['causal-metadata']
-            if causalMetadata == "":  # Case empty string is passed
-                causalMetadata = []
-        senderSocket = request.client.host + ":8080"
-        logging.debug("senderSocket check: %s in view: %s, %s",
-                      senderSocket, view, senderSocket in view)
+            logging.debug("key is in correct shard. doing normal operations.")
+            if 'version' in data:  # version
+                version = data['version']
+            else:
+                version = random.randint(0, 1000)
+                logging.info(
+                    "No Version in data, generating a unique version id: %s", version)
+            if 'causal-metadata' in data:  # causalMetadata
+                causalMetadata = data['causal-metadata']
+                if causalMetadata == "":  # Case empty string is passed
+                    causalMetadata = []
+            senderSocket = request.client.host + ":8080"
+            logging.debug("senderSocket check: %s in view: %s, %s",
+                        senderSocket, view, senderSocket in view)
 
-        logging.debug("===Put at %s : %s", key, value)
+            logging.debug("===Put at %s : %s", key, value)
 
-        # Second, we set up the task that will update the value,
-        # and the forwardinging that will run in the background after
-        # the request is completed
-        # https://www.starlette.io/background/
-        vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
-        isUpdating = await kvstorage.dataMgmt(key, vs)
-        task = BackgroundTask(
-            forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
+            # Second, we set up the task that will update the value,
+            # and the forwardinging that will run in the background after
+            # the request is completed
+            # https://www.starlette.io/background/
+            vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
+            isUpdating = await kvstorage.dataMgmt(key, vs)
+            task = BackgroundTask(
+                forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
 
-        # Finally we return
-        causalMetadata.append(version)
-        if isUpdating:
-            message = {
-                "message": "Updated successfully",
-                "version": version,
-                "causal-metadata": causalMetadata
-            }
-            return JSONResponse(message,
-                                status_code=200,
-                                background=task,
-                                media_type='application/json')
-        else:
-            message = {
-                "message": "Added successfully",
-                "version": version,
-                "causal-metadata": causalMetadata
-            }
-            return JSONResponse(message,
-                                status_code=201,
-                                background=task,
-                                media_type='application/json')
+            # Finally we return
+            causalMetadata.append(version)
+            if isUpdating:
+                message = {
+                    "message": "Updated successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata
+                }
+                return JSONResponse(message,
+                                    status_code=200,
+                                    background=task,
+                                    media_type='application/json')
+            else:
+                message = {
+                    "message": "Added successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata
+                }
+                return JSONResponse(message,
+                                    status_code=201,
+                                    background=task,
+                                    media_type='application/json')
 
     async def delete(self, request):
         # First we set up our variables
@@ -140,8 +169,8 @@ class KeyValueStore(HTTPEndpoint):
             data = ""
 
         key = request.path_params['key']
-        hashedKey = sha.update(key.encode('utf-8'))
-        logging.debug(key + " hashed to " + sha.hexdigest())
+        hashedKey = keySha.update(key.encode('utf-8'))
+        logging.debug(key + " hashed to " + keySha.hexdigest())
 
         version = ""
         causalMetadata = []
@@ -200,8 +229,8 @@ class KeyValueStore(HTTPEndpoint):
     #   returns to the client with the current state of the key
     async def get(self, request):
         key = request.path_params['key']
-        hashedKey = sha.update(key.encode('utf-8'))
-        logging.debug(key + " hashed to " + sha.hexdigest())
+        hashedKey = keySha.update(key.encode('utf-8'))
+        logging.debug(key + " hashed to " + keySha.hexdigest())
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
