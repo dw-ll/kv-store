@@ -32,8 +32,9 @@ shard_count = os.environ['SHARD_COUNT']
 # List of ReplicaGroup objects
 groupList = []
 # Hashing for this specific process.
-identifier = procSha.update(OWN_SOCKET.encode('utf-8'))
-procNodeID = (hash(identifier) % 2) + 1
+procSha.update(OWN_SOCKET.encode('utf-8'))
+procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
+logging.debug("Process Group Id = %s",procNodeID)
 
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
@@ -62,10 +63,14 @@ class KeyValueStore(HTTPEndpoint):
         version = ""
         causalMetadata = []
         reqType = request
-        hashedKey = keySha.update(key.encode('utf-8'))
-        hexEncodedKey = keySha.hexdigest()
-        logging.debug(key + " hashed to " + hexEncodedKey)
-        destinationShard = shard.lookup(hexEncodedKey)
+        keySha.update(key.encode('utf-8'))
+        logging.debug(key + " hashed to " + keySha.hexdigest())
+        logging.debug("Looking up replica group for " + keySha.hexdigest())
+        groupID = (int(keySha.hexdigest(), 16)) % 2 + 1
+        logging.debug(keySha.hexdigest() + "to be put at group:" + str(groupID))
+        destinationShard = groupID
+        putShardID = groupList[procNodeID-1].getReplicaGroupID()
+
        
       
        
@@ -85,12 +90,6 @@ class KeyValueStore(HTTPEndpoint):
         # to the client.
         if(destinationShard != procNodeID):
             logging.debug("this key is not in our shard.")
-            if 'version' in data:  # version
-                version = data['version']
-            else:
-                version = random.randint(0, 1000)
-                logging.info(
-                    "No Version in data, generating a unique version id: %s", version)
             if 'causal-metadata' in data:  # causalMetadata
                 causalMetadata = data['causal-metadata']
                 if causalMetadata == "":  # Case empty string is passed
@@ -101,10 +100,10 @@ class KeyValueStore(HTTPEndpoint):
 
             logging.debug("===Put at %s : %s", key, value)
             vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
-            dest = groupList[procNodeID-1].getReplicas().split(',')[0]
+            dest = groupList[destinationShard-1].getReplicas().split(',')[0]
             logging.debug("forwarding this request to %s", dest)
-
-            forwardToShard(destinationShard,key,request,value,version,causalMetadata)
+            
+            forwardToShard(destinationShard,dest,key,request,value,version,causalMetadata)
 
 
         # the key hashed out to the proper group id, process and forward like usual.
@@ -141,7 +140,8 @@ class KeyValueStore(HTTPEndpoint):
                 message = {
                     "message": "Updated successfully",
                     "version": version,
-                    "causal-metadata": causalMetadata
+                    "causal-metadata": causalMetadata,
+                    "shard-id": putShardID
                 }
                 return JSONResponse(message,
                                     status_code=200,
@@ -151,7 +151,8 @@ class KeyValueStore(HTTPEndpoint):
                 message = {
                     "message": "Added successfully",
                     "version": version,
-                    "causal-metadata": causalMetadata
+                    "causal-metadata": causalMetadata,
+                    "shard-id": putShardID
                 }
                 return JSONResponse(message,
                                     status_code=201,
@@ -210,10 +211,12 @@ class KeyValueStore(HTTPEndpoint):
         # Finally we return
         causalMetadata.append(version)
         if isDeleting:
+            shardDeleteID = groupList[procNodeID-1].getReplicaGroupID()
             message = {
                 "message": "Deleted successfully",
                 "version": version,
-                "causal-metadata": causalMetadata
+                "causal-metadata": causalMetadata,
+                "shard-id": shardDeleteID
             }
             return JSONResponse(message,
                                 status_code=200,

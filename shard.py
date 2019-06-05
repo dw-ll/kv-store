@@ -4,6 +4,7 @@ import random
 import logging
 import math
 import hashlib
+import app
 
 class ReplicaGroup:
     def __init__(self, node_id, count, members, keys, fingerTable):
@@ -19,7 +20,7 @@ class ReplicaGroup:
     def getReplicaGroupCount(self):
         return self.shard_count
     def getReplicas(self):
-        tempString =",".join(shard_id_members)
+        tempString =",".join(self.shard_id_members)
         logging.debug(tempString)
         return tempString
     def getCountOfKeys(self):
@@ -31,10 +32,3 @@ class ReplicaGroup:
         self.shard_id_members.append(addr)
         logging.debug("replica group %s members: %s",self.shard_id,self.shard_id_members)
     
-
-
-def lookup(hashed):
-    logging.debug("Looking up replica group for " + hashed)
-    groupID = (hash(hashed) % 2) + 1
-    logging.debug(hashed + "to be put at group:"+ str(groupID))
-    return groupID
