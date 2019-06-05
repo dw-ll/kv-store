@@ -100,8 +100,11 @@ class KeyValueStore(HTTPEndpoint):
                           senderSocket, view, senderSocket in view)
 
             logging.debug("===Put at %s : %s", key, value)
+            vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
+            dest = groupList[procNodeID-1].getReplicas().split(',')[0]
+            logging.debug("forwarding this request to %s", dest)
 
-            await forwarding(key=key,vs=version,isFromClient=senderSocket not in view,reqType="PUT")
+            forwardToShard(destinationShard,key,request,value,version,causalMetadata)
 
 
         # the key hashed out to the proper group id, process and forward like usual.
@@ -347,7 +350,23 @@ def getNumKeys(request):
     return JSONResponse(message,status_code=200,media_type='application/json')
 
 
-
+def forwardToShard(shardID,addr,key,request,value,version,metadata):
+        logging.debug("Forwarding request to: Shard-ID: %s Key: %s ReqType: %s",
+                      shardID, key, request)
+        if request == "PUT": 
+            rs = (grequests.put(BASE + addr + KVS_ENDPOINT + key,
+                                json={'value': value,
+                                      'version': version,
+                                      'causal-metadata': metadata}))
+        elif request == "DELETE":
+            rs = (grequests.delete(BASE + addr + KVS_ENDPOINT + key,
+                                   json={'version': version,
+                                         'causal-metadata': metadata}))
+        else:
+            logging.error("forwarding reqType invalid!!!")
+        grequests.map(rs, exception_handler=exception_handler,
+                      gtimeout=TIMEOUT_TIME)
+        logging.debug("Forwarding Finished")
 async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
