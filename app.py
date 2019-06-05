@@ -17,8 +17,8 @@ import math
 # Setup
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
-keySha = hashlib.sha256()
-procSha = hashlib.sha256()
+keySha = hashlib.sha1()
+procSha = hashlib.sha1()
 
 
 
@@ -172,7 +172,7 @@ class KeyValueStore(HTTPEndpoint):
             data = ""
 
         key = request.path_params['key']
-        hashedKey = keySha.update(key.encode('utf-8'))
+        keySha.update(key.encode('utf-8'))
         logging.debug(key + " hashed to " + keySha.hexdigest())
 
         version = ""
@@ -232,7 +232,7 @@ class KeyValueStore(HTTPEndpoint):
     #   returns to the client with the current state of the key
     async def get(self, request):
         key = request.path_params['key']
-        hashedKey = keySha.update(key.encode('utf-8'))
+        keySha.update(key.encode('utf-8'))
         logging.debug(key + " hashed to " + keySha.hexdigest())
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
@@ -410,7 +410,7 @@ def repairView(downSocket):
 
 
 def initChord(view):
-    ipSHA = hashlib.sha256()
+    ipSHA = hashlib.sha1()
     logging.debug("Chord is being initialized. Shard count: %s", shard_count)
     logging.debug("About to add replica groups.")
     logging.debug("Adding a replica group with id")
@@ -421,20 +421,20 @@ def initChord(view):
     logging.debug("groupList had elements added, r1 and r2.")
     addr = os.environ['SOCKET_ADDRESS']
     logging.debug("addr is "+ addr)
-    procID = ipSHA.update(addr.encode('utf-8'))
+    ipSHA.update(addr.encode('utf-8'))
     logging.debug("identifier is " + str(ipSHA.hexdigest()))
     #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
-    hashedGroupID = (hash(procID) % 2) + 1
+    hashedGroupID = (int(ipSHA.hexdigest(),16) % 2) + 1
     #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
     logging.debug(addr + " is going to group " + str(hashedGroupID))
     groupList[hashedGroupID-1].incrementKeyCount
     groupList[hashedGroupID-1].addGroupMember(OWN_SOCKET)
     logging.debug(view)
     for other in view:
-        hasher = hashlib.sha256()
-        otherHash = hasher.update(other.encode('utf-8'))
+        hasher = hashlib.sha1()
+        hasher.update(other.encode('utf-8'))
         logging.debug("Identifier for "+other + " = " + str(hasher.hexdigest()))
-        hasherGroup = (hash(otherHash) % 2) + 1
+        hasherGroup = (int(hasher.hexdigest(),16) % 2) + 1
         logging.debug(other + " is going to group "+str(hasherGroup))
         if hasherGroup == 1:
             logging.debug("adding " + other + " to replica group.")
