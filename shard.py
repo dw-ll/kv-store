@@ -22,6 +22,8 @@ class ReplicaGroup:
         tempString =",".join(self.shard_id_members)
         logging.debug(tempString)
         return tempString
+    def getMembers(self):
+        return self.shard_id_members
     def getCountOfKeys(self):
         return self.key_count
     def incrementKeyCount(self):

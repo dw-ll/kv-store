@@ -29,6 +29,26 @@ OWN_SOCKET = os.environ['SOCKET_ADDRESS']
 shard_count = os.environ['SHARD_COUNT']
 # List of ReplicaGroup objects
 
+
+def balance(index, fullList):
+    # special:: if replica group has 0
+    # if a certain replica group N_i has greater than 2
+    # we move it to the replica group that has less than 2
+    logging.debug("Balancing about to take place.")
+    for i, group in enumerate(fullList):
+        if i != index and len(fullList[index].shard_id_members) < 2:
+            if len(group.shard_id_members) > 2:
+                logging.debug("Current Group: %s", group.getReplicas())
+                temp = group.shard_id_members.pop()
+                logging.debug("Temp address popped: %s", temp)
+                logging.debug("Current Group After Pop: %s",
+                              group.getReplicas())
+                logging.debug("Starving Group Before Append: %s",
+                              fullList[index].getReplicas())
+                fullList[index].shard_id_members.append(temp)
+                logging.debug("Starving Group After Append: %s",
+                              fullList[index].getReplicas())
+
 shardIDs = "1,2"
 # Hashing for this specific process.
 procSha.update(OWN_SOCKET.encode('utf-8'))
@@ -67,10 +87,21 @@ for other in view:
     else:
         groupList[1].addGroupMember(other)
 
-list1 = groupList[0].getReplicas()
-list2 = groupList[1].getReplicas()
-logging.debug("Members of group 1: " + list1)
-logging.debug("Members of group 2: " + list2)
+
+list1 = groupList[0].shard_id_members
+list2 = groupList[1].shard_id_members
+
+# M replicas, N replica groups
+# M = 7, N = 2, M > 2(N) => M > 4 : TRUE
+# M = 7, N = 10, M > 2(N) => M > 20 : TRUE, M = 6 so FALSE
+# 
+# if condition met, start for loop 
+if len(list1) < 2: 
+    # some balancing code.
+    balance(0,groupList)
+elif len(list2) < 2:
+    balance(1,groupList)
+
 logging.debug(groupList)
 
 @app.route('/key-value-store/{key}')
@@ -455,6 +486,7 @@ def repairView(downSocket):
     app.forward(None, downSocket, True, "VIEW_DELETE")
 
 
+                
 # TODO: views startup
 @app.on_event('startup')
 async def startup():
