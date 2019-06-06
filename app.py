@@ -14,6 +14,7 @@ import views
 import shard
 import hashlib
 import math
+
 # Setup
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
@@ -132,12 +133,7 @@ class KeyValueStore(HTTPEndpoint):
         logging.debug("Looking up replica group for " + keySha.hexdigest())
         groupID = (int(keySha.hexdigest(), 16)) % 2 + 1
         logging.debug(keySha.hexdigest() + "to be put at group:" + str(groupID))
-        destinationShard = groupID
         putShardID = groupList[procNodeID-1].getReplicaGroupID()
-
-       
-      
-       
 
         if len(key) > 50:  # key
             message = {"error": "Key is too long",
@@ -148,26 +144,19 @@ class KeyValueStore(HTTPEndpoint):
         else:
             message = {"error": "Value is missing", "message": "Error in PUT"}
             return JSONResponse(message, status_code=400, media_type='application/json')
+        if 'causal-metadata' in data:  # causalMetadata
+            causalMetadata = data['causal-metadata']
+        if causalMetadata == "":  # Case empty string is passed
+            causalMetadata = []
+
         # the key in the request didn't hash into our group id, we have to redirect 
         # it to the proper replica group rather than process it ourselves.
         # we also are going to be responsible for sending the repsone back 
         # to the client.
-        if(destinationShard != procNodeID):
+        if(groupID != procNodeID):
             logging.debug("this key is not in our shard.")
-            if 'causal-metadata' in data:  # causalMetadata
-                causalMetadata = data['causal-metadata']
-                if causalMetadata == "":  # Case empty string is passed
-                    causalMetadata = []
-            senderSocket = request.client.host + ":8080"
-            logging.debug("senderSocket check: %s in view: %s, %s",
-                          senderSocket, view, senderSocket in view)
 
-            logging.debug("===Put at %s : %s", key, value)
-            vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
-            dest = groupList[destinationShard-1].getReplicas().split(',')[0]
-            logging.debug("forwarding this request to %s", dest)
-            
-            forwardToShard(destinationShard,dest,key,request,value,version,causalMetadata)
+            return forwardToShard(groupID, key, data, "PUT")
 
 
         # the key hashed out to the proper group id, process and forward like usual.
@@ -177,12 +166,8 @@ class KeyValueStore(HTTPEndpoint):
                 version = data['version']
             else:
                 version = random.randint(0, 1000)
-                logging.info(
-                    "No Version in data, generating a unique version id: %s", version)
-            if 'causal-metadata' in data:  # causalMetadata
-                causalMetadata = data['causal-metadata']
-                if causalMetadata == "":  # Case empty string is passed
-                    causalMetadata = []
+                logging.info("No Version in data, generating a unique version id: %s", version)
+
             senderSocket = request.client.host + ":8080"
             logging.debug("senderSocket check: %s in view: %s, %s",
                         senderSocket, view, senderSocket in view)
@@ -326,7 +311,6 @@ class KVSView(HTTPEndpoint):
         return JSONResponse(message, status_code=200, media_type='application/json')
 
     async def put(self, request):
-        views.view
         # Retreive the new address
         # if the data is empty, error
         # if the data already exists in our view, error
@@ -351,7 +335,6 @@ class KVSView(HTTPEndpoint):
     async def delete(self, request):
         # Retreive the address to delete
         # If the data is empty, error
-        views.view
 
         data = await request.json()
         if 'socket-address' in data:
@@ -427,23 +410,23 @@ def getNumKeys(request):
     return JSONResponse(message,status_code=200,media_type='application/json')
 
 
-def forwardToShard(shardID,addr,key,request,value,version,metadata):
+def forwardToShard(shardID, key, data, requestType):
         logging.debug("Forwarding request to: Shard-ID: %s Key: %s ReqType: %s",
-                      shardID, key, request)
-        if request == "PUT": 
-            rs = (grequests.put(BASE + addr + KVS_ENDPOINT + key,
-                                json={'value': value,
-                                      'version': version,
-                                      'causal-metadata': metadata}))
-        elif request == "DELETE":
-            rs = (grequests.delete(BASE + addr + KVS_ENDPOINT + key,
-                                   json={'version': version,
-                                         'causal-metadata': metadata}))
+                      shardID, key, requestType)
+        # TODO: CHange this line for proper sharting:
+        addr = groupList[shardID-1].getReplicas().split(',')[0] 
+        # this one ^
+        
+        destinationAddress = BASE + addr + KVS_ENDPOINT + key, data
+        if requestType == "PUT": 
+            return grequests.get(destinationAddress, data)
+        elif requestType == "DELETE":
+            return grequests.delete(destinationAddress, data)
+        elif requestType == "GET":
+            return grequests.delete(destinationAddress, data)
         else:
-            logging.error("forwarding reqType invalid!!!")
-        grequests.map(rs, exception_handler=exception_handler,
-                      gtimeout=TIMEOUT_TIME)
-        logging.debug("Forwarding Finished")
+            logging.error("Oops! Your code sharted all over everything!\nforwarding reqType invalid!!!")
+
 async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
@@ -483,15 +466,13 @@ def repairView(downSocket):
     global view
     logging.warning("%s is down, adjusting view", downSocket)
     view.remove(downSocket)
-    app.forward(None, downSocket, True, "VIEW_DELETE")
-
+    forwarding(None, downSocket, True, "VIEW_DELETE")
 
                 
 # TODO: views startup
 @app.on_event('startup')
 async def startup():
     global view
-
 
     retrieveStore()
 
