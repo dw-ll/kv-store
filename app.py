@@ -13,14 +13,11 @@ import views
 import shard
 import hashlib
 import math
-
 # Setup
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
 keySha = hashlib.sha1()
 procSha = hashlib.sha1()
-
-
 
 # Constants
 BASE = 'http://'
@@ -30,14 +27,16 @@ SHARD_ENDPOINT = '/key-value-store-shard/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
 shard_count = os.environ['SHARD_COUNT']
 # List of ReplicaGroup objects
-groupList = []
+
+shardIDs = "1,2"
 # Hashing for this specific process.
 procSha.update(OWN_SOCKET.encode('utf-8'))
 procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
-logging.debug("Process Group Id = %s",procNodeID)
 
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
+groupList = []
+logging.debug(groupList)
 
 
 @app.route('/key-value-store/{key}')
@@ -328,10 +327,16 @@ async def store(request):
 # if request should be forwardinged,
 # forwardings PUT at (key, vs) to all
 # replicas in view
+@app.route('/key-value-store-shard/shard-ids')
+def getShardIds(self):
+    message = {
+        "message": "Shard IDs retrieved successfully",
+        "shard-ids": shardIDs}
+    return JSONResponse(message, status_code=200, media_type='application/json')
 
 # Return the Replica Group ID that this process belongs to.
 @app.route('/key-value-store-shard/node-shard-id')
-def getNodeID():
+def getNodeID(self):
     message = {
         "message": "Shard ID of the node retrieved successfully", 
         "shard-id": procNodeID}
@@ -339,10 +344,15 @@ def getNodeID():
     
 
 @app.route('/key-value-store-shard/shard-id-members/{id}')
-def getGroupMembers(request):
-    
+def getGroupMembers(self,request):
+    global groupList
+    logging.debug("ID requested: %s",id)
+    group = groupList[id-1]
+
+    groupString = group.getReplicas()
+
     message = {"message": "Members of shard ID retrieved successfully", 
-    "shard-id-members":groupList[request.path_params['id']-1].getReplicas()}
+    "shard-id-members":groupString}
     return JSONResponse(message,status_code=200,media_type='application/json')
 
 
@@ -413,14 +423,18 @@ def repairView(downSocket):
 
 
 def initChord(view):
+    groupList = []
     ipSHA = hashlib.sha1()
+    shardIDs=""
     logging.debug("Chord is being initialized. Shard count: %s", shard_count)
     logging.debug("About to add replica groups.")
     logging.debug("Adding a replica group with id")
     r1 = shard.ReplicaGroup(1,shard_count,[],0,{})
     r2 = shard.ReplicaGroup(2, shard_count, [], 0, {})
     groupList.append(r1)
+    shardIDs +="1"
     groupList.append(r2)
+    shardIDs +=",2"
     logging.debug("groupList had elements added, r1 and r2.")
     addr = os.environ['SOCKET_ADDRESS']
     logging.debug("addr is "+ addr)
@@ -450,6 +464,7 @@ def initChord(view):
     list2 = groupList[1].getReplicas()
     logging.debug("Members of group 1: " + list1)
     logging.debug("Members of group 2: " + list2)
+    
 
 
 # TODO: views startup
