@@ -2,6 +2,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.background import BackgroundTask
 from starlette.endpoints import HTTPEndpoint
+from starlette.requests import Request
 import uvicorn
 import grequests
 import logging
@@ -32,12 +33,45 @@ shardIDs = "1,2"
 # Hashing for this specific process.
 procSha.update(OWN_SOCKET.encode('utf-8'))
 procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
-
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 groupList = []
-logging.debug(groupList)
+ipSHA = hashlib.sha1()
+logging.debug("Chord is being initialized. Shard count: %s", shard_count)
+# Statically handle the first two nodes we'll always need.
+r1 = shard.ReplicaGroup(1,shard_count,[],0,{})
+r2 = shard.ReplicaGroup(2, shard_count, [], 0,{})
+groupList.append(r1)
+groupList.append(r2)
+addr = os.environ['SOCKET_ADDRESS']
+logging.debug("addr is " + addr)
+ipSHA.update(addr.encode('utf-8'))
+logging.debug("identifier is " + str(ipSHA.hexdigest()))
+logging.debug("length of groupList: %s",len(groupList))
+#logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
+hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
+#logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
+logging.debug(addr + " is going to group " + str(hashedGroupID))
+groupList[hashedGroupID-1].incrementKeyCount
+groupList[hashedGroupID-1].addGroupMember(OWN_SOCKET)
+logging.debug(view)
+for other in view:
+    hasher = hashlib.sha1()
+    hasher.update(other.encode('utf-8'))
+    logging.debug("Identifier for "+other +
+                    " = " + str(hasher.hexdigest()))
+    hasherGroup = (int(hasher.hexdigest(), 16) % 2) + 1
+    logging.debug(other + " is going to group "+str(hasherGroup))
+    if hasherGroup == 1:
+        groupList[0].addGroupMember(other)
+    else:
+        groupList[1].addGroupMember(other)
 
+list1 = groupList[0].getReplicas()
+list2 = groupList[1].getReplicas()
+logging.debug("Members of group 1: " + list1)
+logging.debug("Members of group 2: " + list2)
+logging.debug(groupList)
 
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
@@ -343,17 +377,16 @@ def getNodeID(self):
     return JSONResponse(message,status_code=200,media_type='application/json')
     
 
-@app.route('/key-value-store-shard/shard-id-members/{id}')
-def getGroupMembers(self,request):
-    global groupList
-    logging.debug("ID requested: %s",id)
-    group = groupList[id-1]
-
-    groupString = group.getReplicas()
-
-    message = {"message": "Members of shard ID retrieved successfully", 
-    "shard-id-members":groupString}
-    return JSONResponse(message,status_code=200,media_type='application/json')
+@app.route('/key-value-store-shard/shard-id-members/{shard}')
+class Members(HTTPEndpoint):
+    async def get(self,request):
+        shard = request.path_params['shard']
+        logging.debug("ID requested: %s", shard)
+        group = groupList[int(shard)-1]
+        groupString = group.getReplicas()
+        message = {"message": "Members of shard ID retrieved successfully", 
+        "shard-id-members":groupString}
+        return JSONResponse(message,status_code=200,media_type='application/json')
 
 
 @app.route('/key-value-store-shard/shard-id-key-count/{id}')
@@ -422,61 +455,14 @@ def repairView(downSocket):
     app.forward(None, downSocket, True, "VIEW_DELETE")
 
 
-def initChord(view):
-    groupList = []
-    ipSHA = hashlib.sha1()
-    shardIDs=""
-    logging.debug("Chord is being initialized. Shard count: %s", shard_count)
-    logging.debug("About to add replica groups.")
-    logging.debug("Adding a replica group with id")
-    r1 = shard.ReplicaGroup(1,shard_count,[],0,{})
-    r2 = shard.ReplicaGroup(2, shard_count, [], 0, {})
-    groupList.append(r1)
-    shardIDs +="1"
-    groupList.append(r2)
-    shardIDs +=",2"
-    logging.debug("groupList had elements added, r1 and r2.")
-    addr = os.environ['SOCKET_ADDRESS']
-    logging.debug("addr is "+ addr)
-    ipSHA.update(addr.encode('utf-8'))
-    logging.debug("identifier is " + str(ipSHA.hexdigest()))
-    #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
-    hashedGroupID = (int(ipSHA.hexdigest(),16) % 2) + 1
-    #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
-    logging.debug(addr + " is going to group " + str(hashedGroupID))
-    groupList[hashedGroupID-1].incrementKeyCount
-    groupList[hashedGroupID-1].addGroupMember(OWN_SOCKET)
-    logging.debug(view)
-    for other in view:
-        hasher = hashlib.sha1()
-        hasher.update(other.encode('utf-8'))
-        logging.debug("Identifier for "+other + " = " + str(hasher.hexdigest()))
-        hasherGroup = (int(hasher.hexdigest(),16) % 2) + 1
-        logging.debug(other + " is going to group "+str(hasherGroup))
-        if hasherGroup == 1:
-            logging.debug("adding " + other + " to replica group.")
-            groupList[0].addGroupMember(other)
-        else:
-            logging.debug("adding " + other + " to replica group.")
-            groupList[1].addGroupMember(other)
-
-    list1 = groupList[0].getReplicas()
-    list2 = groupList[1].getReplicas()
-    logging.debug("Members of group 1: " + list1)
-    logging.debug("Members of group 2: " + list2)
-    
-
-
 # TODO: views startup
 @app.on_event('startup')
 async def startup():
     global view
 
-    initChord(view)
-    retrieveStore()
-   
 
-  
+    retrieveStore()
+
 
 if __name__ == '__main__':
     uvicorn.run(app, host='0.0.0.0', port=8080, lifespan = "auto" )

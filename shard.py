@@ -4,7 +4,6 @@ import random
 import logging
 import math
 import hashlib
-import app
 
 class ReplicaGroup:
     def __init__(self, node_id, count, members, keys, fingerTable):
@@ -30,5 +29,4 @@ class ReplicaGroup:
     def addGroupMember(self,addr):
         logging.debug("adding %s to replica group %s",addr,self.shard_id)
         self.shard_id_members.append(addr)
-        logging.debug("replica group %s members: %s",self.shard_id,self.shard_id_members)
     
