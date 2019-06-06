@@ -73,7 +73,7 @@ logging.debug("length of groupList: %s",len(groupList))
 hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
 #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
 logging.debug(addr + " is going to group " + str(hashedGroupID))
-groupList[hashedGroupID-1].incrementKeyCount
+groupList[hashedGroupID-1].incrementKeyCount()
 groupList[hashedGroupID-1].addGroupMember(OWN_SOCKET)
 logging.debug(view)
 for other in view:
@@ -146,8 +146,8 @@ class KeyValueStore(HTTPEndpoint):
             return JSONResponse(message, status_code=400, media_type='application/json')
         if 'causal-metadata' in data:  # causalMetadata
             causalMetadata = data['causal-metadata']
-        if causalMetadata == "":  # Case empty string is passed
-            causalMetadata = []
+            if causalMetadata == "":  # Case empty string is passed
+                causalMetadata = []
 
         # the key in the request didn't hash into our group id, we have to redirect 
         # it to the proper replica group rather than process it ourselves.
@@ -380,14 +380,18 @@ def getShardIds(self):
     message = {
         "message": "Shard IDs retrieved successfully",
         "shard-ids": shardIDs}
+
     return JSONResponse(message, status_code=200, media_type='application/json')
 
 # Return the Replica Group ID that this process belongs to.
 @app.route('/key-value-store-shard/node-shard-id')
 def getNodeID(self):
+    group = groupList[procNodeID-1]
+    groupID = group.getReplicaGroupID()
+    logging.debug("Shard ID to be returned: %s",groupID)
     message = {
         "message": "Shard ID of the node retrieved successfully", 
-        "shard-id": procNodeID}
+        "shard-id": groupID}
     return JSONResponse(message,status_code=200,media_type='application/json')
     
 
@@ -416,7 +420,7 @@ def forwardToShard(shardID, key, data, requestType):
         # TODO: CHange this line for proper sharting:
         addr = groupList[shardID-1].getReplicas().split(',')[0] 
         # this one ^
-        
+
         destinationAddress = BASE + addr + KVS_ENDPOINT + key, data
         if requestType == "PUT": 
             return grequests.get(destinationAddress, data)
