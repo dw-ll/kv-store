@@ -247,7 +247,13 @@ class KeyValueStore(HTTPEndpoint):
                       senderSocket, view, senderSocket in view)
 
         logging.debug("===Delete at %s", key)
-
+                # the key in the request didn't hash into our group id, we have to redirect 
+        # it to the proper replica group rather than process it ourselves.
+        # we also are going to be responsible for sending the repsone back 
+        # to the client.
+        if(groupID != procNodeID):
+            logging.debug("this key is not in our shard.")
+            return forwardToShard(groupID, key, data, "DELETE")
         # Second, we set up the task that will update the value,
         # and the forwarding that will run in the background after
         # the request is completed
@@ -286,6 +292,9 @@ class KeyValueStore(HTTPEndpoint):
         key = request.path_params['key']
         keySha.update(key.encode('utf-8'))
         logging.debug(key + " hashed to " + keySha.hexdigest())
+        if(groupID != procNodeID):
+            logging.debug("this key is not in our shard.")
+            return forwardToShard(groupID, key, data, "GET")
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
@@ -460,7 +469,6 @@ async def forwarding(key, vs, isFromClient, reqType):
 def exception_handler(request, exception):
     logging.warning("Replica may be down! Timeout on address: %s", request.url)
     repairView(request.url)
-
 
 def retrieveStore():
     logging.warning("Running Retrieve Store")
