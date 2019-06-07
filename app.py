@@ -30,6 +30,7 @@ VIEW_ENDPOINT = '/key-value-store-view/'
 SHARD_ENDPOINT = '/key-value-store-shard/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
 shard_count = os.environ['SHARD_COUNT']
+TIMEOUT_TIME = 3
 # List of ReplicaGroup objects
 
 
@@ -53,13 +54,9 @@ def balance(index, fullList):
                               fullList[index].getReplicas())
 
 shardIDs = "1,2"
-idList = []
-# Hashing for this specific process.
-procSha = zlib.crc32(OWN_SOCKET.encode('utf-8'))
-#procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
-TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
-groupList = {}
+groupList = []
+idList = []
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 # Statically handle the first two nodes we'll always need.
@@ -68,38 +65,43 @@ for i in range(int(shard_count)):
     tempGroupID = zlib.crc32(group.encode('utf-8'),0)
     logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
     tempGroup = shard.ReplicaGroup(tempGroupID,0,[],0,{})
-    groupList[tempGroupID] = tempGroup
+    groupList.append(tempGroup)
     idList.append(tempGroupID)
 
-for ex in groupList:
-    if ip < groupList[ex].getReplicaGroupID():
-        groupList[ex].addGroupMember(ip)
-        break
-    else:
-        logging.debug("something is wrong.")
 
-groupList[tempGroupID].addGroupMember(OWN_SOCKET)
-addr = os.environ['SOCKET_ADDRESS']
-logging.debug("addr is " + addr)
-logging.debug("identifier is " + str(procSha))
+        
+#groupList[tempGroupID].addGroupMember(OWN_SOCKET)
+logging.debug("addr is " + OWN_SOCKET)
+logging.debug("identifier is " + str(ip))
 logging.debug("length of groupList: %s",len(groupList))
 logging.debug("Group List:" + str(groupList))
 #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
 #hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
 #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
 #logging.debug(addr + " is going to group " + str(hashedGroupID))
-
+us = 0
 logging.debug(view)
 for other in view:
     hasher = zlib.crc32(other.encode('utf-8'))
-    for ex in groupList:
-        if hasher < groupList[ex].getReplicaGroupID():
-            groupList[ex].addGroupMember(other)
+    large = 1
+   
+    logging.debug("other: " + other)
+    for i in range(len(groupList)):
+        if hasher < groupList[i].getReplicaGroupID():
+            if ip < groupList[i].getReplicaGroupID() and us == 0:
+                groupList[i].addGroupMember(other)
+                groupList[i].addGroupMember(OWN_SOCKET)
+                large = 0
+                us =1 
+            else:
+                groupList[i].addGroupMember(other)
+                large = 0
             break
-    
+    if large == 1:
+        logging.debug("hashed "+other + "is too large.")
+        groupList[0].addGroupMember(other)
 
 #
-
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
     # Put handler for KeyValueStore endpoint
