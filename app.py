@@ -199,7 +199,7 @@ class KeyValueStore(HTTPEndpoint):
                             "message": "Updated successfully",
                             "version": version,
                             "causal-metadata": causalMetadata,
-                            "shard-id": native_shard_id
+                            "shard-id": str(native_shard_id)
                         }
                         return JSONResponse(message,
                                             status_code=200,
@@ -210,7 +210,7 @@ class KeyValueStore(HTTPEndpoint):
                             "message": "Added successfully",
                             "version": version,
                             "causal-metadata": causalMetadata,
-                            "shard-id": native_shard_id
+                            "shard-id": str(native_shard_id)
                         }
                         return JSONResponse(message,
                                             status_code=201,
@@ -235,8 +235,8 @@ class KeyValueStore(HTTPEndpoint):
             data = ""
 
         key = request.path_params['key']
-        keyCrc.update(key.encode('utf-8'))
-        logging.debug(key + " hashed to " + keyCrc.hexdigest())
+        keyCrc = zlib.crc32(key.encode('utf-8'))
+        logging.debug(key + " hashed to " + str(keyCrc))
 
         version = ""
         causalMetadata = []
@@ -472,13 +472,14 @@ def forwardToShard(shardID, key, data, requestType):
         addr = groupList[shardID].getMembers()[0] 
         # this one ^
 
-        destinationAddress = BASE + addr + KVS_ENDPOINT + key, data
+        destinationAddress = BASE + addr + KVS_ENDPOINT + key
+        logging.debug(destinationAddress)
         if requestType == "PUT": 
-            return grequests.get(destinationAddress, data)
+            return grequests.put(destinationAddress, data)
         elif requestType == "DELETE":
             return grequests.delete(destinationAddress, data)
         elif requestType == "GET":
-            return grequests.delete(destinationAddress, data)
+            return grequests.get(destinationAddress, data)
         else:
             logging.error("Oops I sharded! Changing pants\nforwarding reqType invalid!!!")
 
@@ -486,6 +487,7 @@ async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
                       key, reqType, groupList[native_shard_id].getMembers())
+        logging.debug(BASE + address + KVS_ENDPOINT + key)
         if reqType == "PUT":
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
                                 json={'value': vs.getValue(),
