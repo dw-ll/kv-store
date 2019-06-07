@@ -32,8 +32,14 @@ OWN_SOCKET = os.environ['SOCKET_ADDRESS']
 shard_count = os.environ['SHARD_COUNT']
 groupList = []
 TIMEOUT_TIME = 3
-# List of ReplicaGroup objects
 
+# Process-specific constants to help set up and record itself within it's assigned shard.
+shardIDs = ""
+view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
+groupList = []
+idList = []
+ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
+native_shard_id = 0
 
 def balance(index, fullList):
     global groupList
@@ -426,6 +432,37 @@ def getNumKeys(request):
     message = {"message": "Key count of shard ID retrieved successfully",
                "shard-id-key-count": groupList[request.path_params['id']].getReplicas()}
     return JSONResponse(message,status_code=200,media_type='application/json')
+
+
+@app.route('/key-value-store-shard/add-member/{newReplica}')
+class AddReplica(HTTPEndpoint):
+    async def put(self,request):
+        senderSocket = request.client.host + ":8080"
+        data = await request.json()
+        big = 1
+        dest = 0
+        if 'socket-address' in data:
+            newAddress = data['socket-address']
+        else:
+            message = {"error": "No address given.",
+                       "message": "Error in DELETE"}
+            return JSONResponse(message, status_code=400, media_type='application/json')
+        newHashedAddress = zlib.crc32(newAddress.encode('utf-8'))
+        
+        for i in range(len(groupList)):
+            if newHashedAddress < groupList[i].getHashID():
+                groupList[i].addGroupMember(newAddress)
+                dest = i
+                big = 0
+        if big == 1:
+            groupList[0].addGroupMember(newAddress)
+        forwarding(None,vs=newAddress, isFromClient = senderSocket not in view, reqType = "PUT")
+        view.add(newAddress)
+        logging.debug("New members list for replica group " + groupList[dest].getNodeID() + ": "+ groupList[dest].getReplicas())
+        logging.debug(view)
+
+            
+
 
 
 def forwardToShard(shardID, key, data, requestType):
