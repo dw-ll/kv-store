@@ -53,28 +53,25 @@ def balance(index, fullList):
                 logging.debug("Starving Group After Append: %s",
                               fullList[index].getReplicas())
 
-shardIDs = "1,2"
+shardIDs = ""
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 groupList = []
 idList = []
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
+native_shard_id = 0
 logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 # Statically handle the first two nodes we'll always need.
 for i in range(int(shard_count)):
     group = "group"+str(i)
     tempGroupID = zlib.crc32(group.encode('utf-8'),0)
     logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
-    tempGroup = shard.ReplicaGroup(tempGroupID,0,[],0,{})
+    tempGroup = shard.ReplicaGroup(i,tempGroupID,0,[],0,{})
+    idList.append(str(i))
     groupList.append(tempGroup)
-    idList.append(tempGroupID)
 
-
+shardIDs = ",".join(idList)
         
 #groupList[tempGroupID].addGroupMember(OWN_SOCKET)
-logging.debug("addr is " + OWN_SOCKET)
-logging.debug("identifier is " + str(ip))
-logging.debug("length of groupList: %s",len(groupList))
-logging.debug("Group List:" + str(groupList))
 #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
 #hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
 #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
@@ -86,7 +83,7 @@ for other in view:
     large = 1
 
     for i in range(len(groupList)):
-        if hasher < groupList[i].getReplicaGroupID():
+        if hasher < groupList[i].getHashID():
                 groupList[i].addGroupMember(other)
                 large = 0
                 break
@@ -97,13 +94,16 @@ for other in view:
 large = 1
 hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 for i in range(len(groupList)):
-    if hasher < groupList[i].getReplicaGroupID():
+    if hasher < groupList[i].getHashID():
             groupList[i].addGroupMember(OWN_SOCKET)
+            native_shard_id = groupList[i].getShardID()
             large = 0
             break
 if large == 1:
     logging.debug("hashed "+other + "is too large.")
     groupList[0].addGroupMember(OWN_SOCKET)
+    native_shard_id = groupList[0].getShardID()
+
     
 
 #
@@ -135,7 +135,7 @@ class KeyValueStore(HTTPEndpoint):
         logging.debug("Looking up replica group for " + keySha.hexdigest())
         groupID = (int(keySha.hexdigest(), 16)) % 2 + 1
         logging.debug(keySha.hexdigest() + "to be put at group:" + str(groupID))
-        putShardID = groupList[procNodeID-1].getReplicaGroupID()
+        putShardID = groupList[procNodeID-1].getHashID()
 
         if len(key) > 50:  # key
             message = {"error": "Key is too long",
@@ -268,7 +268,7 @@ class KeyValueStore(HTTPEndpoint):
         # Finally we return
         causalMetadata.append(version)
         if isDeleting:
-            shardDeleteID = groupList[procNodeID-1].getReplicaGroupID()
+            shardDeleteID = groupList[procNodeID-1].getHashID()
             message = {
                 "message": "Deleted successfully",
                 "version": version,
@@ -397,12 +397,10 @@ def getShardIds(self):
 # Return the Replica Group ID that this process belongs to.
 @app.route('/key-value-store-shard/node-shard-id')
 def getNodeID(self):
-    group = groupList[procNodeID-1]
-    groupID = group.getReplicaGroupID()
-    logging.debug("Shard ID to be returned: %s",groupID)
+    logging.debug("Shard ID to be returned: %s",native_shard_id)
     message = {
         "message": "Shard ID of the node retrieved successfully", 
-        "shard-id": groupID}
+        "shard-id": native_shard_id}
     return JSONResponse(message,status_code=200,media_type='application/json')
     
 
