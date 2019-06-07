@@ -61,22 +61,6 @@ def balance(index, fullList):
                 fullList[index].shard_id_members.append(temp)
                 logging.debug("Starving Group After Append: %s",
                               fullList[index].getReplicas())
-
-shardIDs = ""
-view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
-idList = []
-pendingRequests = []
-# Hashing for this specific process.
-
-#procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
-
-shard_count = os.environ['SHARD_COUNT']
-view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
-groupList = {}
-
-
-ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
-native_shard_id = 0
 logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 # Statically handle the first two nodes we'll always need.
 for i in range(int(shard_count)):
