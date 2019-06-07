@@ -61,55 +61,58 @@ def balance(index, fullList):
                 fullList[index].shard_id_members.append(temp)
                 logging.debug("Starving Group After Append: %s",
                               fullList[index].getReplicas())
-logging.debug("Chord is being initialized. Shard count: %s", shard_count)
-# Statically handle the first two nodes we'll always need.
-for i in range(int(shard_count)):
-    group = "group" + str(i)
-    tempGroupID = zlib.crc32(group.encode('utf-8'),0)
-    logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
-    tempGroup = shard.ReplicaGroup(i,tempGroupID,0,[],0,{})
-    idList.append(str(i))
-    groupList.append(tempGroup)
+def init(number):
+    logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 
-shardIDs = ",".join(idList)
-        
-#groupList[tempGroupID].addGroupMember(OWN_SOCKET)
-#logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
-#hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
-#logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
-#logging.debug(addr + " is going to group " + str(hashedGroupID))
-us = 0
-logging.debug(view)
-for other in view:
-    hasher = zlib.crc32(other.encode('utf-8'))
+
+    # Statically handle the first two nodes we'll always need.
+    for i in range(int(shard_count)):
+        group = "group" + str(i)
+        tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
+        logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+        tempGroup = shard.ReplicaGroup(i, tempGroupID, 0, [], 0, {})
+        idList.append(str(i))
+        groupList.append(tempGroup)
+
+    shardIDs = ",".join(idList)
+
+    #groupList[tempGroupID].addGroupMember(OWN_SOCKET)
+    #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
+    #hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
+    #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
+    #logging.debug(addr + " is going to group " + str(hashedGroupID))
+    us = 0
+    logging.debug(view)
+    for other in view:
+        hasher = zlib.crc32(other.encode('utf-8'))
+        large = 1
+
+        for i in range(len(groupList)):
+            if hasher < groupList[i].getHashID():
+                    groupList[i].addGroupMember(other)
+                    large = 0
+                    break
+        if large == 1:
+            logging.debug("hashed "+other + "is too large.")
+            groupList[0].addGroupMember(other)
+
     large = 1
-
+    hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
     for i in range(len(groupList)):
         if hasher < groupList[i].getHashID():
-                groupList[i].addGroupMember(other)
+                groupList[i].addGroupMember(OWN_SOCKET)
+                native_shard_id = groupList[i].getShardID()
                 large = 0
                 break
     if large == 1:
         logging.debug("hashed "+other + "is too large.")
-        groupList[0].addGroupMember(other)
+        groupList[0].addGroupMember(OWN_SOCKET)
+        native_shard_id = groupList[0].getShardID()
 
-large = 1
-hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
-for i in range(len(groupList)):
-    if hasher < groupList[i].getHashID():
-            groupList[i].addGroupMember(OWN_SOCKET)
-            native_shard_id = groupList[i].getShardID()
-            large = 0
-            break
-if large == 1:
-    logging.debug("hashed "+other + "is too large.")
-    groupList[0].addGroupMember(OWN_SOCKET)
-    native_shard_id = groupList[0].getShardID()
+    groupList.sort(key=lambda x: x.hash_id, reverse=False)
 
-groupList.sort(key=lambda x: x.hash_id, reverse=False)
-
-    
-
+if shard_count is not None:
+    init(shard_count)
 #
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
