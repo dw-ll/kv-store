@@ -15,6 +15,7 @@ import shard
 import hashlib
 import zlib
 import math
+import jsonpickle
 
 # Setup
 logging.basicConfig(level=logging.DEBUG)
@@ -64,12 +65,22 @@ def balance(index, fullList):
 shardIDs = ""
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 idList = []
+pendingRequests = []
+# Hashing for this specific process.
+
+#procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
+
+shard_count = os.environ['SHARD_COUNT']
+view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
+groupList = {}
+
+
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 native_shard_id = 0
 logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 # Statically handle the first two nodes we'll always need.
 for i in range(int(shard_count)):
-    group = "group"+str(i)
+    group = "group" + str(i)
     tempGroupID = zlib.crc32(group.encode('utf-8'),0)
     logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
     tempGroup = shard.ReplicaGroup(i,tempGroupID,0,[],0,{})
@@ -184,13 +195,21 @@ class KeyValueStore(HTTPEndpoint):
                     logging.debug("===Put at %s : %s", key, value)
 
                     # Second, we set up the task that will update the value,
-                    # and the forwardinging that will run in the background after
+                    # add the request to the store incase a copy is made while pending,
+                    # and, set up the forwardinging that will run in the background after
                     # the request is completed
                     # https://www.starlette.io/background/
                     vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
+                    req = (key, vs)
+                    pendingRequests.append(req)
+
                     isUpdating = await kvstorage.dataMgmt(key, vs)
+                    pendingRequests.remove()
                     task = BackgroundTask(
                         forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
+
+                    pendingRequests.remove(req)
+
 
                     # Finally we return
                     causalMetadata.append(version)
@@ -272,9 +291,12 @@ class KeyValueStore(HTTPEndpoint):
         # the request is completed
         # https://www.starlette.io/background/
         vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
+        req = (key, vs)
+        pendingRequests.append(req)
         isDeleting = await kvstorage.dataMgmt(key, vs)
         task = BackgroundTask(
             forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="DELETE")
+        pendingRequests.remove(req)
 
         # Finally we return
         causalMetadata.append(version)
@@ -387,10 +409,14 @@ async def store(request):
     tView = list(view)
     tView.append(view.ownSocket)
     message = {
-        "kvs": json.dumps(kvstorage.kvs, cls=kvstorage.kvsEncoder),
-        "history": kvstorage.history,
-        "view": tView
+        "kvs": jsonpickle.encode(kvstorage.kvs),
+        "history": jsonpickle.encode(kvstorage.history),
+        "view": jsonpickle.encode(view),
+        "shard-ids": jsonpickle.encode(groupList),
+        "shard-count": jsonpickle.encode(shard_count),
+        "pending": jsonpickle.encode(pendingRequests)
     }
+
     return JSONResponse(message, status_code=200, media_type='application/json')
     # TODO: Check for pending requests
 
@@ -514,8 +540,38 @@ def exception_handler(request, exception):
     logging.warning("Replica may be down! Timeout on address: %s", request.url)
     repairView(request.url)
 
+def retrieveStoreHelper():
+    ging.warning("This could be because this process is the first one booted, or something worse happened") 
+
 def retrieveStore():
+    # The opposite of GET /store/
+    # Asks another replica for the store,
+    # then replaces this store with the retreived data
+    global view
+    global shardIDs
+    global shard_count
+
     logging.warning("Running Retrieve Store")
+    try:
+        newStore =  grequests.get(BASE + view[attempt] + "/store/", timeout=TIMEOUT_TIME)
+        if not all (k in newStore for k in ('kvs', 'history', 'view', 'shard-ids',
+                                        'shard-count', 'pending')):
+            logging.error("The store endpoint did not work as intended")
+        kvstorage.kvs       = jsonpickle.decode(newStore['kvs'])
+        kvstorage.history   = jsonpickle.decode(newStore['history'])
+        view                = jsonpickle.decode(newStore['view'])
+        shardIDs            = jsonpickle.decode(newStore['shard-ids'])
+        shard_count         = jsonpickle.decode(newStore['shard-count'])
+        for p in jsonpickle.decode(newStore['shard-count']):
+            kvstorage.dataMgmt(p[0],p[1])
+
+    except:
+        logging.warning("Timeout occured while running retreive store!!")
+
+    
+
+
+
 
 
 def repairView(downSocket):
