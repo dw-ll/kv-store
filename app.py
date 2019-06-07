@@ -31,6 +31,7 @@ VIEW_ENDPOINT = '/key-value-store-view/'
 SHARD_ENDPOINT = '/key-value-store-shard/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
 shard_count = os.environ['SHARD_COUNT']
+pendingRequests = []
 groupList = []
 TIMEOUT_TIME = 3
 
@@ -263,13 +264,11 @@ class KeyValueStore(HTTPEndpoint):
                       senderSocket, view, senderSocket in view)
 
         logging.debug("===Delete at %s", key)
-                # the key in the request didn't hash into our group id, we have to redirect 
+        # the key in the request didn't hash into our group id, we have to redirect 
         # it to the proper replica group rather than process it ourselves.
         # we also are going to be responsible for sending the repsone back 
         # to the client.
-        if(groupID != procNodeID):
-            logging.debug("this key is not in our shard.")
-            return forwardToShard(groupID, key, data, "DELETE")
+
         # Second, we set up the task that will update the value,
         # and the forwarding that will run in the background after
         # the request is completed
@@ -285,7 +284,7 @@ class KeyValueStore(HTTPEndpoint):
         # Finally we return
         causalMetadata.append(version)
         if isDeleting:
-            shardDeleteID = groupList[procNodeID-1].getHashID()
+            shardDeleteID = groupList[native_shard_id].getHashID()
             message = {
                 "message": "Deleted successfully",
                 "version": version,
@@ -311,9 +310,7 @@ class KeyValueStore(HTTPEndpoint):
         key = request.path_params['key']
         keyCrc = zlib.crc32(key.encode('utf-8'))
         logging.debug(key + " hashed to " + keyCrc.hexdigest())
-        if(groupID != procNodeID):
-            logging.debug("this key is not in our shard.")
-            return forwardToShard(groupID, key, data, "GET")
+
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
@@ -398,6 +395,7 @@ async def store(request):
         "view": jsonpickle.encode(view),
         "shard-ids": jsonpickle.encode(groupList),
         "shard-count": jsonpickle.encode(shard_count),
+        "group-list": jsonpickle.encode(groupList),
         "pending": jsonpickle.encode(pendingRequests)
     }
 
@@ -497,7 +495,7 @@ async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
                       key, reqType, groupList[native_shard_id].getMembers())
-        logging.debug(BASE + address + KVS_ENDPOINT + key)
+        # logging.debug(BASE + address + KVS_ENDPOINT + key)
         if reqType == "PUT":
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
                                 json={'value': vs.getValue(),
@@ -524,9 +522,6 @@ def exception_handler(request, exception):
     logging.warning("Replica may be down! Timeout on address: %s", request.url)
     repairView(request.url)
 
-def retrieveStoreHelper():
-    ging.warning("This could be because this process is the first one booted, or something worse happened") 
-
 def retrieveStore():
     # The opposite of GET /store/
     # Asks another replica for the store,
@@ -534,6 +529,8 @@ def retrieveStore():
     global view
     global shardIDs
     global shard_count
+    global groupList
+    
 
     logging.warning("Running Retrieve Store")
     try:
@@ -546,6 +543,7 @@ def retrieveStore():
         view                = jsonpickle.decode(newStore['view'])
         shardIDs            = jsonpickle.decode(newStore['shard-ids'])
         shard_count         = jsonpickle.decode(newStore['shard-count'])
+        groupList           = jsonpickle.decode(newStore['group-list'])
         for p in jsonpickle.decode(newStore['shard-count']):
             kvstorage.dataMgmt(p[0],p[1])
 
