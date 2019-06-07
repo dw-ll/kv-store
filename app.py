@@ -30,8 +30,10 @@ KVS_ENDPOINT = '/key-value-store/'
 VIEW_ENDPOINT = '/key-value-store-view/'
 SHARD_ENDPOINT = '/key-value-store-shard/'
 OWN_SOCKET = os.environ['SOCKET_ADDRESS']
-shard_count = os.environ['SHARD_COUNT']
-groupList = []
+if 'SHARD_COUNT' in os.environ:
+    shard_count = os.environ['SHARD_COUNT']
+else:
+    shard_count = None
 TIMEOUT_TIME = 3
 
 # Process-specific constants to help set up and record itself within it's assigned shard.
@@ -61,52 +63,116 @@ def balance(index, fullList):
                 fullList[index].shard_id_members.append(temp)
                 logging.debug("Starving Group After Append: %s",
                               fullList[index].getReplicas())
-logging.debug("Chord is being initialized. Shard count: %s", shard_count)
-# Statically handle the first two nodes we'll always need.
-for i in range(int(shard_count)):
-    group = "group" + str(i)
-    tempGroupID = zlib.crc32(group.encode('utf-8'),0)
-    logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
-    tempGroup = shard.ReplicaGroup(i,tempGroupID,0,[],0,{})
-    idList.append(str(i))
-    groupList.append(tempGroup)
 
-shardIDs = ",".join(idList)
-        
-#groupList[tempGroupID].addGroupMember(OWN_SOCKET)
-#logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
-#hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
-#logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
-#logging.debug(addr + " is going to group " + str(hashedGroupID))
-us = 0
-logging.debug(view)
-for other in view:
-    hasher = zlib.crc32(other.encode('utf-8'))
+if shard_count is not None:
+    logging.debug("we have a shard count.")
+    logging.debug("Chord is being initialized. Shard count: %s", shard_count)
+
+    # Statically handle the first two nodes we'll always need.
+    for i in range(int(shard_count)):
+        group = "group" + str(i)
+        tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
+        logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+        tempGroup = shard.ReplicaGroup(i, tempGroupID, 0, [], 0, {})
+        idList.append(str(i))
+        groupList.append(tempGroup)
+
+    shardIDs = ",".join(idList)
+
+    #groupList[tempGroupID].addGroupMember(OWN_SOCKET)
+    #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
+    #hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
+    #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
+    #logging.debug(addr + " is going to group " + str(hashedGroupID))
+    us = 0
+    logging.debug(view)
+    for other in view:
+        hasher = zlib.crc32(other.encode('utf-8'))
+        large = 1
+
+        for i in range(len(groupList)):
+            if hasher < groupList[i].getHashID():
+                    groupList[i].addGroupMember(other)
+                    large = 0
+                    break
+        if large == 1:
+            logging.debug("hashed "+other + "is too large.")
+            groupList[0].addGroupMember(other)
+
     large = 1
-
+    hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
     for i in range(len(groupList)):
         if hasher < groupList[i].getHashID():
-                groupList[i].addGroupMember(other)
+                groupList[i].addGroupMember(OWN_SOCKET)
+                native_shard_id = groupList[i].getShardID()
                 large = 0
                 break
     if large == 1:
         logging.debug("hashed "+other + "is too large.")
-        groupList[0].addGroupMember(other)
+        groupList[0].addGroupMember(OWN_SOCKET)
+        native_shard_id = groupList[0].getShardID()
 
-large = 1
-hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
-for i in range(len(groupList)):
-    if hasher < groupList[i].getHashID():
-            groupList[i].addGroupMember(OWN_SOCKET)
-            native_shard_id = groupList[i].getShardID()
-            large = 0
-            break
-if large == 1:
-    logging.debug("hashed "+other + "is too large.")
-    groupList[0].addGroupMember(OWN_SOCKET)
-    native_shard_id = groupList[0].getShardID()
+    groupList.sort(key=lambda x: x.hash_id, reverse=False)
+  
+else:
+    logging.debug("this is a new process. retrieving shard_count from an active replica.")
+    informant = view[0]
+    ad = BASE+informant+'/inform/'
+    logging.debug("attempting to reach "+ ad+" for the shard_count.")
+    shard_num = grequests.get(ad,timeout = TIMEOUT_TIME)
+    numList = grequests.map([shard_num])
+    #data = shard_num['shard-count']
+    logging.debug("%s",numList)
+    shard_count = numList[0].json()['shard-count']
+    logging.debug("here is the shard count:"+shard_count+". going to init the system now.")
+    logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 
-groupList.sort(key=lambda x: x.hash_id, reverse=False)
+    # Statically handle the first two nodes we'll always need.
+    for i in range(int(shard_count)):
+        group = "group" + str(i)
+        tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
+        logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+        tempGroup = shard.ReplicaGroup(i, tempGroupID, 0, [], 0, {})
+        idList.append(str(i))
+        groupList.append(tempGroup)
+
+    shardIDs = ",".join(idList)
+
+    #groupList[tempGroupID].addGroupMember(OWN_SOCKET)
+    #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
+    #hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
+    #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
+    #logging.debug(addr + " is going to group " + str(hashedGroupID))
+    us = 0
+    logging.debug(view)
+    for other in view:
+        hasher = zlib.crc32(other.encode('utf-8'))
+        large = 1
+
+        for i in range(len(groupList)):
+            if hasher < groupList[i].getHashID():
+                    groupList[i].addGroupMember(other)
+                    large = 0
+                    break
+        if large == 1:
+            logging.debug("hashed "+other + "is too large.")
+            groupList[0].addGroupMember(other)
+
+    large = 1
+    hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
+    for i in range(len(groupList)):
+        if hasher < groupList[i].getHashID():
+                groupList[i].addGroupMember(OWN_SOCKET)
+                native_shard_id = groupList[i].getShardID()
+                large = 0
+                break
+    if large == 1:
+        logging.debug("hashed "+other + "is too large.")
+        groupList[0].addGroupMember(OWN_SOCKET)
+        native_shard_id = groupList[0].getShardID()
+
+    groupList.sort(key=lambda x: x.hash_id, reverse=False)
+    
 
     
 
@@ -444,12 +510,12 @@ def getNumKeys(request):
     return JSONResponse(message,status_code=200,media_type='application/json')
 
 
-@app.route('/key-value-store-shard/add-member/{newReplica}')
+@app.route('/key-value-store-shard/add-member/{id}')
 class AddReplica(HTTPEndpoint):
     async def put(self,request):
         senderSocket = request.client.host + ":8080"
         data = await request.json()
-        big = 1
+        destShard = request.path_params['id']
         dest = 0
         if 'socket-address' in data:
             newAddress = data['socket-address']
@@ -457,21 +523,20 @@ class AddReplica(HTTPEndpoint):
             message = {"error": "No address given.",
                        "message": "Error in DELETE"}
             return JSONResponse(message, status_code=400, media_type='application/json')
-        newHashedAddress = zlib.crc32(newAddress.encode('utf-8'))
         
-        for i in range(len(groupList)):
-            if newHashedAddress < groupList[i].getHashID():
-                groupList[i].addGroupMember(newAddress)
-                dest = i
-                big = 0
-        if big == 1:
-            groupList[0].addGroupMember(newAddress)
+        groupList[id-1].addGroupMember(newAddress)
+        logging.debug("Added "+newAddress + " to group: "+ groupList[id-1].getShardID())
         forwarding(None,vs=newAddress, isFromClient = senderSocket not in view, reqType = "PUT")
         view.add(newAddress)
-        logging.debug("New members list for replica group " + groupList[dest].getNodeID() + ": "+ groupList[dest].getReplicas())
+        logging.debug("New members list for replica group " + groupList[id-1].getNodeID() + ": "+ groupList[id-1].getReplicas())
         logging.debug(view)
 
-            
+@app.route('/inform/')
+class Inf(HTTPEndpoint):
+    def get(self,request):
+        message = {"message": "here is your shard-id.",
+                    "shard-count":shard_count} 
+        return JSONResponse(message,status_code=200,media_type='application/json')         
 
 
 
