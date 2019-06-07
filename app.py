@@ -41,6 +41,7 @@ groupList = []
 idList = []
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 native_shard_id = 0
+pendingRequests = []
 
 def balance(index, fullList):
     global groupList
@@ -313,10 +314,8 @@ class KeyValueStore(HTTPEndpoint):
     async def get(self, request):
         key = request.path_params['key']
         keyCrc = zlib.crc32(key.encode('utf-8'))
-        logging.debug(key + " hashed to " + keyCrc.hexdigest())
-        if(groupID != procNodeID):
-            logging.debug("this key is not in our shard.")
-            return forwardToShard(groupID, key, data, "GET")
+        logging.debug("%s hashed to %s", key, keyCrc)
+        
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
@@ -401,6 +400,7 @@ async def store(request):
         "view": jsonpickle.encode(view),
         "shard-ids": jsonpickle.encode(groupList),
         "shard-count": jsonpickle.encode(shard_count),
+        "group-list" : jsonpickle.encode(groupList),
         "pending": jsonpickle.encode(pendingRequests)
     }
 
@@ -481,6 +481,7 @@ class AddReplica(HTTPEndpoint):
 def forwardToShard(shardID, key, data, requestType):
         logging.debug("Forwarding request to: Shard-ID: %s Key: %s ReqType: %s",
                       shardID, key, requestType)
+        logging.debug("data: %s", data)
         # TODO: CHange this line for proper sharting:
         addr = groupList[shardID].getMembers()[0] 
         # this one ^
@@ -527,9 +528,6 @@ def exception_handler(request, exception):
     logging.warning("Replica may be down! Timeout on address: %s", request.url)
     repairView(request.url)
 
-def retrieveStoreHelper():
-    ging.warning("This could be because this process is the first one booted, or something worse happened") 
-
 def retrieveStore():
     # The opposite of GET /store/
     # Asks another replica for the store,
@@ -537,6 +535,7 @@ def retrieveStore():
     global view
     global shardIDs
     global shard_count
+    global groupList
 
     logging.warning("Running Retrieve Store")
     try:
@@ -549,6 +548,7 @@ def retrieveStore():
         view                = jsonpickle.decode(newStore['view'])
         shardIDs            = jsonpickle.decode(newStore['shard-ids'])
         shard_count         = jsonpickle.decode(newStore['shard-count'])
+        groupList           = jsonpickle.decode(newStore['group-list'])
         for p in jsonpickle.decode(newStore['shard-count']):
             kvstorage.dataMgmt(p[0],p[1])
 
