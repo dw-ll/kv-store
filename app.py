@@ -13,12 +13,14 @@ import kvstorage
 import views
 import shard
 import hashlib
+import zlib
 import math
 # Setup
 logging.basicConfig(level=logging.DEBUG)
 app = Starlette(debug=True)
-keySha = hashlib.sha1()
-procSha = hashlib.sha1()
+#keySha = zlib.crc32()
+
+
 
 # Constants
 BASE = 'http://'
@@ -50,59 +52,52 @@ def balance(index, fullList):
                               fullList[index].getReplicas())
 
 shardIDs = "1,2"
+idList = []
 # Hashing for this specific process.
-procSha.update(OWN_SOCKET.encode('utf-8'))
-procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
+procSha = zlib.crc32(OWN_SOCKET.encode('utf-8'))
+#procNodeID = (int(procSha.hexdigest(),16) % 2) + 1
 TIMEOUT_TIME = 3
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
-groupList = []
-ipSHA = hashlib.sha1()
+groupList = {}
+ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 # Statically handle the first two nodes we'll always need.
-r1 = shard.ReplicaGroup(1,shard_count,[],0,{})
-r2 = shard.ReplicaGroup(2, shard_count, [], 0,{})
-groupList.append(r1)
-groupList.append(r2)
+for i in range(int(shard_count)):
+    group = "group"+str(i)
+    tempGroupID = zlib.crc32(group.encode('utf-8'),0)
+    logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+    tempGroup = shard.ReplicaGroup(tempGroupID,0,[],0,{})
+    groupList[tempGroupID] = tempGroup
+    idList.append(tempGroupID)
+
+for ex in groupList:
+    if ip < groupList[ex].getReplicaGroupID():
+        groupList[ex].addGroupMember(ip)
+        break
+    else:
+        logging.debug("something is wrong.")
+
+groupList[tempGroupID].addGroupMember(OWN_SOCKET)
 addr = os.environ['SOCKET_ADDRESS']
 logging.debug("addr is " + addr)
-ipSHA.update(addr.encode('utf-8'))
-logging.debug("identifier is " + str(ipSHA.hexdigest()))
+logging.debug("identifier is " + str(procSha))
 logging.debug("length of groupList: %s",len(groupList))
+logging.debug("Group List:" + str(groupList))
 #logging.debug("Identifier for "+OWN_SOCKET + "= " + str(ipSHA.hexdigest()))
-hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
+#hashedGroupID = (int(ipSHA.hexdigest(), 16) % 2) + 1
 #logging.debug(OWN_SOCKET + " will be in replica group: " + str(hashedGroupID))
-logging.debug(addr + " is going to group " + str(hashedGroupID))
-groupList[hashedGroupID-1].incrementKeyCount()
-groupList[hashedGroupID-1].addGroupMember(OWN_SOCKET)
+#logging.debug(addr + " is going to group " + str(hashedGroupID))
+
 logging.debug(view)
 for other in view:
-    hasher = hashlib.sha1()
-    hasher.update(other.encode('utf-8'))
-    logging.debug("Identifier for "+other +
-                    " = " + str(hasher.hexdigest()))
-    hasherGroup = (int(hasher.hexdigest(), 16) % 2) + 1
-    logging.debug(other + " is going to group "+str(hasherGroup))
-    if hasherGroup == 1:
-        groupList[0].addGroupMember(other)
-    else:
-        groupList[1].addGroupMember(other)
+    hasher = zlib.crc32(other.encode('utf-8'))
+    for ex in groupList:
+        if hasher < groupList[ex].getReplicaGroupID():
+            groupList[ex].addGroupMember(other)
+            break
+    
 
-
-list1 = groupList[0].shard_id_members
-list2 = groupList[1].shard_id_members
-
-# M replicas, N replica groups
-# M = 7, N = 2, M > 2(N) => M > 4 : TRUE
-# M = 7, N = 10, M > 2(N) => M > 20 : TRUE, M = 6 so FALSE
-# 
-# if condition met, start for loop 
-if len(list1) < 2: 
-    # some balancing code.
-    balance(0,groupList)
-elif len(list2) < 2:
-    balance(1,groupList)
-
-logging.debug(groupList)
+#
 
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
