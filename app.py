@@ -38,6 +38,7 @@ TIMEOUT_TIME = 3
 shardIDs = ""
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 groupList = []
+pendingRequests = []
 idList = []
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 native_shard_id = 0
@@ -127,6 +128,7 @@ class KeyValueStore(HTTPEndpoint):
         #   causalMetadata: list of versions that must be completed before
         #                           value is added to the key
         global groupList
+        global pendingRequests
         data = await request.json()
         
         key = request.path_params['key']
@@ -188,11 +190,10 @@ class KeyValueStore(HTTPEndpoint):
                     pendingRequests.append(req)
 
                     isUpdating = await kvstorage.dataMgmt(key, vs)
-                    pendingRequests.remove()
+                    pendingRequests.remove(req)
                     task = BackgroundTask(
                         forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
 
-                    pendingRequests.remove(req)
 
 
                     # Finally we return
@@ -497,7 +498,7 @@ async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
                       key, reqType, groupList[native_shard_id].getMembers())
-        logging.debug(BASE + address + KVS_ENDPOINT + key)
+       # logging.debug(BASE + address + KVS_ENDPOINT + key)
         if reqType == "PUT":
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
                                 json={'value': vs.getValue(),
