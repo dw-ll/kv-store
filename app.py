@@ -84,22 +84,27 @@ logging.debug(view)
 for other in view:
     hasher = zlib.crc32(other.encode('utf-8'))
     large = 1
-   
-    logging.debug("other: " + other)
+
     for i in range(len(groupList)):
         if hasher < groupList[i].getReplicaGroupID():
-            if ip < groupList[i].getReplicaGroupID() and us == 0:
-                groupList[i].addGroupMember(other)
-                groupList[i].addGroupMember(OWN_SOCKET)
-                large = 0
-                us =1 
-            else:
                 groupList[i].addGroupMember(other)
                 large = 0
-            break
+                break
     if large == 1:
         logging.debug("hashed "+other + "is too large.")
         groupList[0].addGroupMember(other)
+
+large = 1
+hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
+for i in range(len(groupList)):
+    if hasher < groupList[i].getReplicaGroupID():
+            groupList[i].addGroupMember(OWN_SOCKET)
+            large = 0
+            break
+if large == 1:
+    logging.debug("hashed "+other + "is too large.")
+    groupList[0].addGroupMember(OWN_SOCKET)
+    
 
 #
 @app.route('/key-value-store/{key}')
