@@ -2,6 +2,7 @@ import logging
 import asyncio
 
 import json
+import jsonpickle
 
 class ValueStore:
     def __init__(self, value, version, cm):
@@ -22,27 +23,6 @@ class ValueStore:
         self.versions.append(vs.getVersion())
         self.causalMetadata.append(vs.causalMetadata)
 
-    def toJSON(self):
-        return json.dumps(self, default=lambda o: o.__dict__, 
-            sort_keys=True, indent=4)
-        # return dict(
-        #     versions=self.versions,
-        #     values=self.values,
-        #     causalMetadata=self.causalMetadata
-        #     )
-        #return json.dumps(self, default=lambda o: o.__dict__,
-        #                  sort_keys=True, indent=4)
-class kvsEncoder(json.JSONEncoder):
-    def default(self,obj):
-        if isinstance(obj, ValueStore):
-            return {"values":obj.values,
-                    "versions" : obj.versions,
-                    "causalMetadata" : obj.causalMetadata}
-        return kvsEncoder.default(self,obj)
-
-    def generate(self):
-        # self.casualMetadata.append(self.version)
-        self.version = self.version + 1
 
 # Globals
 kvs = {}
