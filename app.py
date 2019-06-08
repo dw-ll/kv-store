@@ -299,41 +299,41 @@ class KeyValueStore(HTTPEndpoint):
             # the request is completed
             # https://www.starlette.io/background/
             
-            vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
-            req = (key, vs)
-            pendingRequests.append(req)
-            isUpdating = await kvstorage.dataMgmt(key, vs)
-            groupList[native_shard_id].incrementKeyCount()
-            pendingRequests.remove(req)
-            logging.debug("forwarding history: %s", version)
-            await forwarding(None, version, isFromClient, reqType="HISTORY" )
-            task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="PUT")
+        vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
+        req = (key, vs)
+        pendingRequests.append(req)
+        isUpdating = await kvstorage.dataMgmt(key, vs)
+        groupList[native_shard_id].incrementKeyCount()
+        pendingRequests.remove(req)
+        logging.debug("forwarding history: %s", version)
+        await forwarding(None, version, isFromClient, reqType="HISTORY" )
+        task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="PUT")
 
-            # Finally we return
-            causalMetadata.append(version)
+        # Finally we return
+        causalMetadata.append(version)
 
-            if isUpdating:
-                message = {
-                    "message": "Updated successfully",
-                    "version": version,
-                    "causal-metadata": causalMetadata,
-                    "shard-id": jsonpickle.encode(native_shard_id)
-                        }
-                return JSONResponse(message,
-                                    status_code=200,
-                                    background=task,
-                                    media_type='application/json')
-            else:
-                message = {
-                    "message": "Added successfully",
-                    "version": version,
-                    "causal-metadata": causalMetadata,
-                    "shard-id": jsonpickle.encode(native_shard_id)
-                }
-                return JSONResponse(message,
-                                    status_code=201,
-                                    background=task,
-                                    media_type='application/json')
+        if isUpdating:
+            message = {
+                "message": "Updated successfully",
+                "version": version,
+                "causal-metadata": causalMetadata,
+                "shard-id": jsonpickle.encode(native_shard_id)
+                    }
+            return JSONResponse(message,
+                                status_code=200,
+                                background=task,
+                                media_type='application/json')
+        else:
+            message = {
+                "message": "Added successfully",
+                "version": version,
+                "causal-metadata": causalMetadata,
+                "shard-id": jsonpickle.encode(native_shard_id)
+            }
+            return JSONResponse(message,
+                                status_code=201,
+                                background=task,
+                                media_type='application/json')
 
 
     async def delete(self, request):
@@ -392,9 +392,11 @@ class KeyValueStore(HTTPEndpoint):
                     return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
                 else:
                     logging.debug("key is in correct shard. doing normal operations.")
+                    break
             elif keyCrc > groupList[len(groupList)-1].getHashID():
                 if int(groupList[0].getShardID()) == native_shard_id:
                     logging.debug("forwarding within our group")
+                    break
                                       
                 else:
                     logging.debug("forwarding elsewhere")
@@ -402,41 +404,41 @@ class KeyValueStore(HTTPEndpoint):
                     return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
 
 
-            # Second, we set up the task that will update the value,
-            # and the forwarding that will run in the background after
-            # the request is completed
-            # https://www.starlette.io/background/
-            vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
-            req = (key, vs)
-            pendingRequests.append(req)
-            isDeleting = await kvstorage.dataMgmt(key, vs)
-            groupList[native_shard_id].decrementKeyCount()
-            pendingRequests.remove(req)
-            logging.debug("forwarding history: %s", version)
-            await forwarding(None, version, isFromClient, reqType="HISTORY" )
-            task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="DELETE")
+        # Second, we set up the task that will update the value,
+        # and the forwarding that will run in the background after
+        # the request is completed
+        # https://www.starlette.io/background/
+        vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
+        req = (key, vs)
+        pendingRequests.append(req)
+        isDeleting = await kvstorage.dataMgmt(key, vs)
+        groupList[native_shard_id].decrementKeyCount()
+        pendingRequests.remove(req)
+        logging.debug("forwarding history: %s", version)
+        await forwarding(None, version, isFromClient, reqType="HISTORY" )
+        task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="DELETE")
 
-            # Finally we return
-            causalMetadata.append(version)
-            if isDeleting:
-                message = {
-                    "message": "Deleted successfully",
-                    "version": version,
-                    "causal-metadata": causalMetadata,
-                    "shard-id": jsonpickle.encode(native_shard_id)
-                }
-                return JSONResponse(message,
-                                    status_code=200,
-                                    background=task,
-                                    media_type='application/json')
-            else:
-                message = {
-                    "message": "Error in DELETE",
-                    "error": "Key does not exist"
-                }
-                return JSONResponse(message,
-                                    status_code=404,
-                                    media_type='application/json')
+        # Finally we return
+        causalMetadata.append(version)
+        if isDeleting:
+            message = {
+                "message": "Deleted successfully",
+                "version": version,
+                "causal-metadata": causalMetadata,
+                "shard-id": jsonpickle.encode(native_shard_id)
+            }
+            return JSONResponse(message,
+                                status_code=200,
+                                background=task,
+                                media_type='application/json')
+        else:
+            message = {
+                "message": "Error in DELETE",
+                "error": "Key does not exist"
+            }
+            return JSONResponse(message,
+                                status_code=404,
+                                media_type='application/json')
 
     # Get Handler for key value store endpoint
     #   returns to the client with the current state of the key
@@ -575,12 +577,13 @@ def getShardIds(self):
 
 # Return the Replica Group ID that this process belongs to.
 @app.route('/key-value-store-shard/node-shard-id')
-def getNodeID(self):
-    logging.debug("Shard ID to be returned: %s",native_shard_id)
-    message = {
-        "message": "Shard ID of the node retrieved successfully", 
-        "shard-id": native_shard_id}
-    return JSONResponse(message,status_code=200,media_type='application/json')
+class ShardMembers:
+    async def get(self):
+        logging.debug("Shard ID to be returned: %s",native_shard_id)
+        message = {
+            "message": "Shard ID of the node retrieved successfully", 
+            "shard-id": native_shard_id}
+        return JSONResponse(message,status_code=200,media_type='application/json')
     
 
 @app.route('/key-value-store-shard/shard-id-members/{shard}')
@@ -596,11 +599,14 @@ class Members(HTTPEndpoint):
         return JSONResponse(message,status_code=200,media_type='application/json')
 
 
-@app.route('/key-value-store-shard/shard-id-key-count/{id}')
-def getNumKeys(request):
-    message = {"message": "Key count of shard ID retrieved successfully",
-               "shard-id-key-count": groupList[native_shard_id].shard_count}
-    return JSONResponse(message,status_code=200,media_type='application/json')
+@app.route('/key-value-store-shard/shard-id-key-count/{shard}')
+class KeyCount(HTTPEndpoint):
+     async def get(self,request):
+        shard = int(request.path_params['shard'])
+        logging.debug("returning shard key count of %s",groupList[shard].getCountOfKeys())
+        message = {"message": "Key count of shard ID retrieved successfully",
+                "shard-id-key-count": groupList[shard].getCountOfKeys()}
+        return JSONResponse(message,status_code=200,media_type='application/json')
 
 @app.route('/history/')
 class Hist(HTTPEndpoint):
@@ -756,7 +762,7 @@ class Build(HTTPEndpoint):
        logging.debug(group+" hashed to "+str(tempGroupID))
        newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
        groupList.append(newShard)
-       idList.append(newIndex)
+       idList.append(newShard)
        shardIDs = ",".join(idList)
 
        for i, group in enumerate(groupList):

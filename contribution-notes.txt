@@ -1,4 +1,5 @@
-Daniel Williams (daswilli):Implemented code to set up distributed hash table, including creating shards, adding IP's to shards based on hash and storing all the corresponding info/state across all IP's. Implemented code to add new nodes to our system. 
+Daniel Williams (daswilli):Implemented code to set up distributed hash table, including creating shards,
+adding IP's to shards based on hash and storing all the corresponding info/state across all IP's. Implemented code to add new nodes to our system. Implemented resharding.
 Doug Korody (dkorody): Worked on forwarding put and get for key-value-store objects and helped design the system.
 Kenneth Collings (keacolli): Implement much of the causal ability and starter framwork; built the store transfer, delete replicas, kvs delete, helped with debugging and system design
 Sheryl Ratnam (sratnam): Worked on some test script functions
