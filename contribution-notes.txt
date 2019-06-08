@@ -1,5 +1,4 @@
-Daniel Williams (daswilli):Implemented view operations/adjustments,modified kv operations 
-and implemented forwarding method to relay those operations to other replicas appropriately.
+Daniel Williams (daswilli):Implemented code to set up distributed hash table, including creating shards, adding IP's to shards based on hash and storing all the corresponding info/state across all IP's. Implemented code to add new nodes to our system. 
 Doug Korody (dkorody): Worked on JSON encoder and decoder for valueStore object, helped debug issues with view operations and downed replicas
 Kenneth Collings (keacolli): Implement much of the causal ability; built the valueStore object; built PUT and DELETE
 Sheryl Ratnam (sratnam): Worked on some test script functions
