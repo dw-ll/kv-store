@@ -579,6 +579,9 @@ def getShardIds(self):
     return JSONResponse(message, status_code=200, media_type='application/json')
 
 # Return the Replica Group ID that this process belongs to.
+
+
+
 @app.route('/key-value-store-shard/node-shard-id')
 class ShardMembers(HTTPEndpoint):
     async def get(self,request):
@@ -602,12 +605,14 @@ class Members(HTTPEndpoint):
         return JSONResponse(message,status_code=200,media_type='application/json')
 
 
-@app.route('/key-value-store-shard/shard-id-key-count/{id}')
-def getNumKeys(request):
-    message = {"message": "Key count of shard ID retrieved successfully",
-               "shard-id-key-count": len(kvstorage.kvs)}
-               #groupList[native_shard_id].shard_count
-    return JSONResponse(message,status_code=200,media_type='application/json')
+@app.route('/key-value-store-shard/shard-id-key-count/{shard}')
+class KeyCount(HTTPEndpoint):
+    async def get(self,request):
+        shard = int(request.path_params['shard'])
+        logging.debug("returning shard key count of %s",groupList[shard].getCountOfKeys())
+        message = {"message": "Key count of shard ID retrieved successfully",
+                "shard-id-key-count": groupList[shard].getCountOfKeys()}
+        return JSONResponse(message,status_code=200,media_type='application/json')
 
 @app.route('/history/')
 class Hist(HTTPEndpoint):
@@ -616,6 +621,9 @@ class Hist(HTTPEndpoint):
         data = await request.json()
         if 'history' in data:
             newHistory = data['history']
+            shard = data['shard-id']
+            keyCnt = data['key-count']
+            groupList[int(shard)].key_count = keyCnt
             if newHistory not in kvstorage.history:
                 kvstorage.history.append(newHistory)
                 message = {"message": "History updated"}
