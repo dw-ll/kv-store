@@ -648,31 +648,6 @@ def forwardToShard(shardID, key, data, requestType):
 
         resp = grequests.map([rs])
         return resp[0]
-async def forwarding(key, vs, isFromClient, reqType):
-    if isFromClient:
-        logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
-                      key, reqType, groupList[native_shard_id].getMembers())
-       # logging.debug(BASE + address + KVS_ENDPOINT + key)
-        if reqType == "PUT":
-            rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
-                                json={'value': vs.getValue(),
-                                      'version': vs.getVersion(),
-                                      'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
-        elif reqType == "DELETE":
-            rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
-                                   json={'version': vs.getVersion(),
-                                         'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
-        elif reqType == "VIEW_DELETE":
-            rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
-                                   json={'socket-address': vs}) for address in groupList[native_shard_id].getMembers())
-        else:
-            logging.error("forwarding reqType invalid!!!")
-        grequests.map(rs, exception_handler=exception_handler,
-                      gtimeout=TIMEOUT_TIME)
-        logging.debug("putforwarding Finished")
-    else:
-        logging.debug(
-            "request is from a replica (not a client), not forwardinging")
 
 
 def exception_handler(request, exception):
