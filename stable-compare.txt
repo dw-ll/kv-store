@@ -1,0 +1,119 @@
+###################### Running Tests ######################
+
+
+###################### Getting Shard IDs ######################
+
+.
+###################### Getting the Members of Shard IDs ######################
+
+.
+###################### Getting the Shard ID of the nodes ######################
+
+F
+###################### Putting keys/values to the store ######################
+
+E
+###################### Getting keys/values from the store ######################
+
+E
+###################### Getting key count of each shard ######################
+
+E
+###################### Adding a new node ######################
+
+516b3e4db568ed015fd53192c0367be7a0601a8b8bf9b32dfb71b185f161256c
+F
+###################### Doing Impossible Resharding ######################
+
+F
+###################### Doing Resharding ######################
+
+F
+======================================================================
+ERROR: test_d_put_key_value_operation (__main__.TestHW3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File ".\test_assignment4_v3.py", line 221, in test_d_put_key_value_operation
+    responseInJson = response.json()
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\site-packages\requests\models.py", line 897, in json
+    return complexjson.loads(self.text, **kwargs)
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\__init__.py", line 348, in loads
+    return _default_decoder.decode(s)
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 3 (char 2)
+
+======================================================================
+ERROR: test_e_get_key_value_operation (__main__.TestHW3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File ".\test_assignment4_v3.py", line 242, in test_e_get_key_value_operation
+    responseInJson = response.json()
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\site-packages\requests\models.py", line 897, in json
+    return complexjson.loads(self.text, **kwargs)
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\__init__.py", line 348, in loads
+    return _default_decoder.decode(s)
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 3 (char 2)
+
+======================================================================
+ERROR: test_f_shard_key_count (__main__.TestHW3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File ".\test_assignment4_v3.py", line 256, in test_f_shard_key_count
+    responseInJson = response.json()
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\site-packages\requests\models.py", line 897, in json
+    return complexjson.loads(self.text, **kwargs)
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\__init__.py", line 348, in loads
+    return _default_decoder.decode(s)
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "C:\Users\kenco\AppData\Local\Programs\Python\Python37-32\lib\json\decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 3 (char 2)
+
+======================================================================
+FAIL: test_c_node_shard_id (__main__.TestHW3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File ".\test_assignment4_v3.py", line 173, in test_c_node_shard_id
+    self.assertTrue(node1ShardId in self.shardIdList)
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_g_add_new_node (__main__.TestHW3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File ".\test_assignment4_v3.py", line 297, in test_g_add_new_node
+    self.assertEqual(responseInJson['view'], newView)
+AssertionError: '10.1[38 chars]80,10.10.0.5:8080,10.10.0.6:8080,10.10.0.7:8080' != '10.1[38 chars]80,10.10.0.5:8080,10.10.0.6:8080,10.10.0.7:8080,10.10.0.8:8080'
+- 10.10.0.2:8080,10.10.0.3:8080,10.10.0.4:8080,10.10.0.5:8080,10.10.0.6:8080,10.10.0.7:8080
++ 10.10.0.2:8080,10.10.0.3:8080,10.10.0.4:8080,10.10.0.5:8080,10.10.0.6:8080,10.10.0.7:8080,10.10.0.8:8080
+?                                                                                          +++++++++++++++
+
+
+======================================================================
+FAIL: test_h_impossible_reshard (__main__.TestHW3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File ".\test_assignment4_v3.py", line 338, in test_h_impossible_reshard
+    self.assertEqual(response.status_code, 400)
+AssertionError: 404 != 400
+
+======================================================================
+FAIL: test_i_possible_reshard (__main__.TestHW3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File ".\test_assignment4_v3.py", line 345, in test_i_possible_reshard
+    self.assertEqual(response.status_code, 200)
+AssertionError: 404 != 200
+
+----------------------------------------------------------------------
+Ran 9 tests in 33.875s
+
+FAILED (failures=4, errors=3)
