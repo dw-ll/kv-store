@@ -1,16 +1,23 @@
 MECHANISM NOTES
 
 ----- Distributed Hash Table -----
-For our structure, we were partly influenced by the Chord P2P lookup mechanism. We use the crc32 algorithm to do all of our hashing.  At boot, a node will create it's own groupList.
+- SETUP:For our structure, we were partly influenced by the Chord P2P lookup mechanism. We use the crc32 algorithm to do all of our hashing.  At boot, a node will create it's own groupList.
 Given a shard_count, that node will create a groupList of ReplicaGroup objects. A ReplicaGroup object contains all of the state for
 a shard, such as shard_id, key_count, a list of members inside that shard, and so on. Next, that node will add itself into one of the shards based the hash of it's 
 own IP. It cycles through it's VIEW and does the same for every other replica. Placement of replicas uses a successor-like mechanism. If the hash(IP) < hash(group#), then the replica
 with that respective IP will be placed into that ReplicaGroup (shard). In the events of a freshly booted node, we run the same type of initializing code but since we don't 
 have a shard_count, we have to query another replica for it's current shard_count which we trust is the correct at the moment of the boot. Other logistical requests are sent, such as 
-adding the new node to the right ReplicaGroup across all IP's that are alive, as well as adding it into their views, and etc. we pass the incomming keys through the crc32 algorithm
-and then place them on the ring by looping thorough our ReplicaGroup list and fining the ReplicaGroup that would be the successor of the key. We then forward the put request to the 
+adding the new node to the right ReplicaGroup across all IP's that are alive, as well as adding it into their views, and etc. 
+- KV OPERATIONS: we pass the incomming keys through the crc32 algorithm and then place them on the ring by looping thorough our ReplicaGroup list and fining the ReplicaGroup that would be the successor of the key. We then forward the put request to the 
 first member of that ReplicaGroup list. When that member recieves the forwarded put request from another ReplicaGroup it forwards the put request to the rest of the 
 members in its ReplicaGroup.
+- RESHARDING: For resharding, we take in a new shard_count at the /reshard/ endpoint. We check if 2 * shard_count > active replicas, if true, we don't have enough
+replicas to achieve a resharding. If false, we proceed. First, the new shard is created and appended to the receiving node's groupList. We then do corresponding logisitical operations. 
+This includes adding the new shard-id to the node's id list, and then broadcasting to every other active replica's /add-shard/ endpoint. This endpoint is set up 
+to mimic the reshard request on other replicas, where they do everything listed above deterministically. After that request is sent, the original recepient of the request
+then does some balancing. It loops through groupList and while it's not on the new shard it takes the first replica from a different shard (when the shard has more than two nodes)
+and adds it to the new shard's member list. The code to do this is also in the /add-shard/ endpoint for the other replicas, this is to keep all operations symmetric across all replicas.
+
 
 
 ----- DOWN REPLICAS -----
