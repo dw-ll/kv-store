@@ -43,6 +43,8 @@ groupList = []
 idList = []
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 native_shard_id = 0
+pendingRequests = []
+
 
 def balance(index, fullList):
     global groupList
@@ -69,7 +71,6 @@ async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
                       key, reqType, groupList[native_shard_id].getMembers())
-        logging.debug(BASE + address + KVS_ENDPOINT + key)
         if reqType == "PUT":
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
                                 json={'value': vs.getValue(),
@@ -483,6 +484,11 @@ class KVSView(HTTPEndpoint):
         if delAddress in view:
             # Delete
             view.remove(delAddress)
+            rg = getRepGroup(ip)
+            if rg:
+                rg.shard_id_members.remove(ip)
+            else:
+                logging.error("deleteReplica could not find given ip: %s in replica group", ip)
 
             # Return
             message = {"message": "Replica deleted successfully from the view"}
@@ -504,6 +510,7 @@ async def store(request):
         "view": jsonpickle.encode(view),
         "shard-ids": jsonpickle.encode(groupList),
         "shard-count": jsonpickle.encode(shard_count),
+        "group-list": jsonpickle.encode(groupList),
         "pending": jsonpickle.encode(pendingRequests)
     }
 
@@ -602,10 +609,7 @@ def forwardToShard(shardID, key, data, requestType):
 
 def exception_handler(request, exception):
     logging.warning("Replica may be down! Timeout on address: %s", request.url)
-    repairView(request.url)
-
-def retrieveStoreHelper():
-    ging.warning("This could be because this process is the first one booted, or something worse happened") 
+    deleteReplica(request.url)
 
 def retrieveStore():
     # The opposite of GET /store/
@@ -614,6 +618,8 @@ def retrieveStore():
     global view
     global shardIDs
     global shard_count
+    global groupList
+    
 
     logging.warning("Running Retrieve Store")
     try:
@@ -626,23 +632,37 @@ def retrieveStore():
         view                = jsonpickle.decode(newStore['view'])
         shardIDs            = jsonpickle.decode(newStore['shard-ids'])
         shard_count         = jsonpickle.decode(newStore['shard-count'])
+        groupList           = jsonpickle.decode(newStore['group-list'])
         for p in jsonpickle.decode(newStore['shard-count']):
             kvstorage.dataMgmt(p[0],p[1])
-
     except:
         logging.warning("Timeout occured while running retreive store!!")
 
-    
-
-
-
-
-
-def repairView(downSocket):
+def deleteReplica(ip):
+    # Manage view and groupList locally
+    # broacast that change
+    # rebalance if needed 
     global view
-    logging.warning("%s is down, adjusting view", downSocket)
-    view.remove(downSocket)
-    forwarding(None, downSocket, True, "VIEW_DELETE")
+    logging.warning("%s is down, adjusting view and grouplist", ip)
+    view.remove(ip)
+    rg = getRepGroup(ip)
+    if rg:
+        rg.shard_id_members.remove(ip)
+    else:
+        logging.error("deleteReplica could not find given ip: %s in replica group", ip)
+    
+    forwarding(None, ip, True, "VIEW_DELETE")
+
+    if len(rg.shard_id_members) < 2:
+        logging.warning("balance needed!")
+        balance(groupList.index(rg), groupList)
+
+def getRepGroup(ip):
+    for i in groupList:
+        if ip in i.shard_id_members:
+            return i
+    return False
+
 
                 
 # TODO: views startup
