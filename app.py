@@ -631,7 +631,7 @@ class Members(HTTPEndpoint):
 @app.route('/key-value-store-shard/shard-id-key-count/{id}')
 def getNumKeys(request):
     message = {"message": "Key count of shard ID retrieved successfully",
-               "shard-id-key-count": groupList[request.path_params['id']].getReplicas()}
+               "shard-id-key-count": groupList[native_shard_id].shard_count}
     return JSONResponse(message,status_code=200,media_type='application/json')
 
 @app.route('/history/')
