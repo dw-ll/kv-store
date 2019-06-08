@@ -424,6 +424,29 @@ class KeyValueStore(HTTPEndpoint):
     async def get(self, request):
         key = request.path_params['key']
         keyCrc = zlib.crc32(key.encode('utf-8'))
+        data = {}
+        for i in range(0,len(groupList)-1):
+            logging.debug("i = %s gList[i].hash_id: %s, gList[i+1].hash_id:%s",i,groupList[i].getHashID(),groupList[i+1].getHashID())
+            
+            if keyCrc > groupList[i].hash_id and keyCrc < groupList[i+1].hash_id:
+                logging.debug("found spot for key between %s and %s",i,i+1)
+                if native_shard_id != int(groupList[i+1].getShardID()):
+                    #forward to other shard group
+                    resp = forwardToShard(groupList[i+1].getShardID(),key,data,"GET")
+                    return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
+                    # the key hashed out to the proper group id, process and forward like usual.
+                else:
+                    logging.debug("return value")
+                    break
+            elif keyCrc > groupList[len(groupList)-1].getHashID():
+                logging.debug("printing shit out bro!!!!!!our shard %s group0shard: %s",native_shard_id,groupList[0].getShardID())
+                if int(groupList[0].getShardID()) == native_shard_id:
+                    logging.debug("return value") 
+                    break                                       
+                else:
+                    logging.debug("forwarding elsewhere")
+                    resp = forwardToShard(groupList[0].getShardID(),key,data,"GET")
+                    return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
