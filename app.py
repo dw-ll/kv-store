@@ -588,7 +588,7 @@ class ShardMembers(HTTPEndpoint):
         logging.debug("Shard ID to be returned: %s",native_shard_id)
         message = {
             "message": "Shard ID of the node retrieved successfully", 
-            "shard-id": jsonpickle.encode(native_shard_id)}
+            "shard-id": jsonpickle.encode(int(native_shard_id))}
         return JSONResponse(message,status_code=200,media_type='application/json')
     
 
