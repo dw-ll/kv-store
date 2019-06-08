@@ -98,7 +98,7 @@ def rebalance(index, count, list):
            if i != index and len(group.getMembers()) > 2:
                logging.debug("Group %s before removal: %s",group.getNodeID(),group.getMembers())
                tempIP = group.shard_id_members.pop(0)
-               logging.debug("%s removed from group ",tempIP,group.getNodeID())
+               logging.debug("%s removed from group %s",tempIP,group.getNodeID())
                groupList[index].addGroupMember(tempIP)
                logging.debug("Added %s to group %s.",tempIP,groupList[index].getNodeID())
 
@@ -108,16 +108,16 @@ async def forwarding(key, vs, isFromClient, reqType):
                       key, reqType, groupList[native_shard_id].getMembers())
         if reqType == "PUT":
             alist = groupList[native_shard_id].getMembers().copy()
-            if OWN_SOCKET in list:
-                list.remove(OWN_SOCKET)
+            if OWN_SOCKET in alist:
+                alist.remove(OWN_SOCKET)
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
                                 json={'value': vs.getValue(),
                                       'version': vs.getVersion(),
                                       'causal-metadata': vs.causalMetadata}) for address in alist)
         elif reqType == "DELETE":
             alist = groupList[native_shard_id].getMembers().copy()
-            if OWN_SOCKET in list:
-                list.remove(OWN_SOCKET)
+            if OWN_SOCKET in alist:
+                alist.remove(OWN_SOCKET)
             rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
                                    json={'version': vs.getVersion(),
                                          'causal-metadata': vs.causalMetadata}) for address in alist)
