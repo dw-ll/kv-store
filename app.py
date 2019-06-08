@@ -157,8 +157,8 @@ if shard_count is not None:
         groupList[0].addGroupMember(OWN_SOCKET)
         native_shard_id = groupList[0].getShardID()
 
-
-    groupList.sort(key=lambda x: x.hash_id, reverse=False)
+    memList = groupList[native_shard_id].shard_id_members
+    memList.sort()
   
 else:
     native_shard_id = 0
