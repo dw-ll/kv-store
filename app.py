@@ -64,6 +64,38 @@ def balance(index, fullList):
                 logging.debug("Starving Group After Append: %s",
                               fullList[index].getReplicas())
 
+
+async def forwarding(key, vs, isFromClient, reqType):
+    if isFromClient:
+        logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
+                      key, reqType, groupList[native_shard_id].getMembers())
+        logging.debug(BASE + address + KVS_ENDPOINT + key)
+        if reqType == "PUT":
+            rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
+                                json={'value': vs.getValue(),
+                                      'version': vs.getVersion(),
+                                      'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+        elif reqType == "DELETE":
+            rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
+                                   json={'version': vs.getVersion(),
+                                         'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+        elif reqType == "VIEW_DELETE":
+            rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
+                                   json={'socket-address': vs}) for address in view)
+        elif reqType == "VIEW_ADD":
+            rs = (grequests.put(BASE + address + VIEW_ENDPOINT,
+                                json={'socket-address': vs}) for address in view)
+
+        else:
+            logging.error("forwarding reqType invalid!!!")
+        grequests.map(rs, exception_handler=exception_handler,
+                      gtimeout=TIMEOUT_TIME)
+        logging.debug("putforwarding Finished")
+    else:
+        logging.debug(
+            "request is from a replica (not a client), not forwardinging")
+
+
 if shard_count is not None:
     logging.debug("we have a shard count.")
     logging.debug("Chord is being initialized. Shard count: %s", shard_count)
@@ -172,6 +204,14 @@ else:
         native_shard_id = groupList[0].getShardID()
 
     groupList.sort(key=lambda x: x.hash_id, reverse=False)
+    rs = (grequests.put(BASE + address + VIEW_ENDPOINT,
+                        json={'socket-address': OWN_SOCKET}) for address in view)
+    grequests.map(rs)
+    logging.debug("Added ourselves to everyone's view.")
+
+
+
+    
     
 
     
@@ -558,31 +598,6 @@ def forwardToShard(shardID, key, data, requestType):
         else:
             logging.error("Oops I sharded! Changing pants\nforwarding reqType invalid!!!")
 
-async def forwarding(key, vs, isFromClient, reqType):
-    if isFromClient:
-        logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
-                      key, reqType, groupList[native_shard_id].getMembers())
-        logging.debug(BASE + address + KVS_ENDPOINT + key)
-        if reqType == "PUT":
-            rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
-                                json={'value': vs.getValue(),
-                                      'version': vs.getVersion(),
-                                      'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
-        elif reqType == "DELETE":
-            rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
-                                   json={'version': vs.getVersion(),
-                                         'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
-        elif reqType == "VIEW_DELETE":
-            rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
-                                   json={'socket-address': vs}) for address in groupList[native_shard_id].getMembers())
-        else:
-            logging.error("forwarding reqType invalid!!!")
-        grequests.map(rs, exception_handler=exception_handler,
-                      gtimeout=TIMEOUT_TIME)
-        logging.debug("putforwarding Finished")
-    else:
-        logging.debug(
-            "request is from a replica (not a client), not forwardinging")
 
 
 def exception_handler(request, exception):
