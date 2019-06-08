@@ -295,11 +295,9 @@ class KeyValueStore(HTTPEndpoint):
                     pendingRequests.append(req)
 
                     isUpdating = await kvstorage.dataMgmt(key, vs)
-                    pendingRequests.remove()
+                    pendingRequests.remove(req)
                     task = BackgroundTask(
                         forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
-
-                    pendingRequests.remove(req)
 
 
                     # Finally we return
