@@ -35,6 +35,7 @@ if 'SHARD_COUNT' in os.environ:
 else:
     shard_count = None
 TIMEOUT_TIME = 3
+MAX_VERSION = 9223372036854775806
 
 # Process-specific constants to help set up and record itself within it's assigned shard.
 shardIDs = ""
@@ -260,7 +261,7 @@ class KeyValueStore(HTTPEndpoint):
         if 'version' in data:  # version
                         version = data['version']
         else:
-            version = random.randint(0, 1000)
+            version = random.randint(0, MAX_VERSION)
             logging.info("No Version in data, generating a unique version id: %s", version)
 
         senderSocket = request.client.host + ":8080"
