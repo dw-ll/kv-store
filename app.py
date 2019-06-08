@@ -100,7 +100,7 @@ async def forwarding(key, vs, isFromClient, reqType):
             rs = (grequests.put(BASE + address + "/history/",
                                 json={'history': vs,
                                       'shard-id': native_shard_id,
-                                      'key-count': groupList[native_shard_id].key_count}) for address in view)
+                                      'key-count': len(kvstorage.kvs)}) for address in view)
         else:
             logging.error("forwarding reqType invalid!!!")
         grequests.map(rs, exception_handler=exception_handler,
@@ -308,10 +308,11 @@ class KeyValueStore(HTTPEndpoint):
             pendingRequests.append(req)
             isUpdating = await kvstorage.dataMgmt(key, vs)
 
-            groupList[native_shard_id].incrementKeyCount()
             pendingRequests.remove(req)
+            # if not isUpdating:
+            #     groupList[native_shard_id].incrementKeyCount()
             logging.debug("forwarding history: %s", version)
-            await forwarding(None, version, isFromClient, reqType="HISTORY" )
+            await forwarding(None, version, True, reqType="HISTORY" )
             task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="PUT")
 
             # Finally we return
@@ -415,10 +416,11 @@ class KeyValueStore(HTTPEndpoint):
             req = (key, vs)
             pendingRequests.append(req)
             isDeleting = await kvstorage.dataMgmt(key, vs)
-            groupList[native_shard_id].decrementKeyCount()
+            if not isDeleting:
+                groupList[native_shard_id].decrementKeyCount()
             pendingRequests.remove(req)
             logging.debug("forwarding history: %s", version)
-            await forwarding(None, version, isFromClient, reqType="HISTORY" )
+            await forwarding(None, version, True, reqType="HISTORY" )
             task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="DELETE")
 
             # Finally we return
