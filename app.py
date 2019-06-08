@@ -42,7 +42,8 @@ view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 groupList = []
 idList = []
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
-native_shard_id = 0
+
+new_native = 0
 
 def balance(index, fullList):
     global groupList
@@ -97,6 +98,7 @@ async def forwarding(key, vs, isFromClient, reqType):
 
 
 if shard_count is not None:
+    native_shard_id = 0
     logging.debug("we have a shard count.")
     logging.debug("Chord is being initialized. Shard count: %s", shard_count)
 
@@ -147,6 +149,7 @@ if shard_count is not None:
     groupList.sort(key=lambda x: x.hash_id, reverse=False)
   
 else:
+    native_shard_id = 0
     logging.debug("this is a new process. retrieving shard_count from an active replica.")
     informant = view[0]
     ad = BASE+informant+'/inform/'
@@ -192,23 +195,14 @@ else:
 
     large = 1
     hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
-    for i in range(len(groupList)):
-        if hasher < groupList[i].getHashID():
-                groupList[i].addGroupMember(OWN_SOCKET)
-                native_shard_id = groupList[i].getShardID()
-                large = 0
-                break
-    if large == 1:
-        logging.debug("hashed "+other + "is too large.")
-        groupList[0].addGroupMember(OWN_SOCKET)
-        native_shard_id = groupList[0].getShardID()
+   
 
     groupList.sort(key=lambda x: x.hash_id, reverse=False)
     rs = (grequests.put(BASE + address + VIEW_ENDPOINT,
                         json={'socket-address': OWN_SOCKET}) for address in view)
     grequests.map(rs)
     logging.debug("Added ourselves to everyone's view.")
-
+    
 
 
     
@@ -536,8 +530,9 @@ class Members(HTTPEndpoint):
     async def get(self,request):
         shard = request.path_params['shard']
         logging.debug("ID requested: %s", shard)
-        group = groupList[int(shard)-1]
+        group = groupList[int(shard)]
         groupString = group.getReplicas()
+        logging.debug("Heres our members that will be returned: %s",groupString)
         message = {"message": "Members of shard ID retrieved successfully", 
         "shard-id-members":groupString}
         return JSONResponse(message,status_code=200,media_type='application/json')
@@ -555,28 +550,64 @@ class AddReplica(HTTPEndpoint):
     async def put(self,request):
         senderSocket = request.client.host + ":8080"
         data = await request.json()
-        destShard = request.path_params['id']
-        dest = 0
+        destShard = request.path_params['id']      
         if 'socket-address' in data:
             newAddress = data['socket-address']
         else:
             message = {"error": "No address given.",
                        "message": "Error in DELETE"}
             return JSONResponse(message, status_code=400, media_type='application/json')
-        
-        groupList[id-1].addGroupMember(newAddress)
-        logging.debug("Added "+newAddress + " to group: "+ groupList[id-1].getShardID())
-        forwarding(None,vs=newAddress, isFromClient = senderSocket not in view, reqType = "PUT")
-        view.add(newAddress)
-        logging.debug("New members list for replica group " + groupList[id-1].getNodeID() + ": "+ groupList[id-1].getReplicas())
+        rs = (grequests.put(BASE + newAddress+'/id-correct/'+str(destShard),
+                           ))
+        grequests.map([rs])
+        groupList[int(destShard)].addGroupMember(newAddress)
+        logging.debug("Added "+str(newAddress) + " to group: " +
+                      str(groupList[int(destShard)].getShardID()))
+        rs = (grequests.put(BASE + address+ '/member-list/'+str(destShard),
+                            json={'socket-address': newAddress})for address in view)
+        grequests.map(rs)
+
+        rs = (grequests.put(BASE + '/key-value-store-shard/add-member/'+str(destShard),
+                            json={'socket-address':newAddress})for address in view)
+        grequests.map(rs)
+
+    
+        logging.debug("New members list for replica group " + str(groupList[int(destShard)].getShardID()) + ": "+ str(groupList[int(destShard)].getReplicas()))
         logging.debug(view)
+        message = {"message": "Replica added to shard succesfully."}
+        return JSONResponse(message,status_code=200,media_type='application/json')
 
 @app.route('/inform/')
 class Inf(HTTPEndpoint):
     def get(self,request):
         message = {"message": "here is your shard-id.",
                     "shard-count":shard_count} 
-        return JSONResponse(message,status_code=200,media_type='application/json')         
+        return JSONResponse(message,status_code=200,media_type='application/json')       
+
+
+@app.route('/id-correct/{id}')
+class Correct(HTTPEndpoint):
+    def put(self, request):
+        global native_shard_id
+        native = request.path_params['id']
+        native_shard_id = native
+        logging.debug("Our new native id: %s",native_shard_id)
+        message = {"message": "here is your shard-id.",
+                   "shard-id": new_native}
+        return JSONResponse(message, status_code=200, media_type='application/json')
+
+
+@app.route('/member-list/{id}')
+class Correct(HTTPEndpoint):
+    async def put(self, request):
+        data = await request.json()
+        theShard = request.path_params['id']
+        newAddress = data['socket-address']
+        groupList[int(theShard)].addGroupMember(newAddress)
+        message = {"message": "Added new member."}
+        return JSONResponse(message, status_code=200, media_type='application/json')
+
+
 
 
 
