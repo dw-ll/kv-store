@@ -31,6 +31,8 @@ class ReplicaGroup:
         return self.key_count
     def incrementKeyCount(self):
         self.key_count +=1
+    def decrementKeyCount(self):
+        self.key_count -=1
     def addGroupMember(self,addr):
         logging.debug("adding %s to replica group %s",addr,self.shard_id)
         self.shard_id_members.append(addr)

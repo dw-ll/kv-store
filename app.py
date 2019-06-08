@@ -35,6 +35,7 @@ if 'SHARD_COUNT' in os.environ:
 else:
     shard_count = None
 TIMEOUT_TIME = 3
+MAX_VERSION = 9223372036854775806
 
 # Process-specific constants to help set up and record itself within it's assigned shard.
 shardIDs = ""
@@ -74,14 +75,20 @@ async def forwarding(key, vs, isFromClient, reqType):
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
                       key, reqType, groupList[native_shard_id].getMembers())
         if reqType == "PUT":
+            alist = groupList[native_shard_id].getMembers().copy()
+            if OWN_SOCKET in alist:
+                alist.remove(OWN_SOCKET)
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
                                 json={'value': vs.getValue(),
                                       'version': vs.getVersion(),
-                                      'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+                                      'causal-metadata': vs.causalMetadata}) for address in alist)
         elif reqType == "DELETE":
+            alist = groupList[native_shard_id].getMembers().copy()
+            if OWN_SOCKET in alist:
+                alist.remove(OWN_SOCKET)
             rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
                                    json={'version': vs.getVersion(),
-                                         'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+                                         'causal-metadata': vs.causalMetadata}) for address in alist)
         elif reqType == "VIEW_DELETE":
             rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
                                    json={'socket-address': vs}) for address in view)
@@ -199,7 +206,6 @@ else:
 
     large = 1
     hasher = zlib.crc32(OWN_SOCKET.encode('utf-8'))
-   
 
     groupList.sort(key=lambda x: x.hash_id, reverse=False)
     rs = (grequests.put(BASE + address + VIEW_ENDPOINT,
@@ -207,13 +213,6 @@ else:
     grequests.map(rs)
     logging.debug("Added ourselves to everyone's view.")
     
-
-
-    
-    
-
-    
-
 #
 @app.route('/key-value-store/{key}')
 class KeyValueStore(HTTPEndpoint):
@@ -238,7 +237,6 @@ class KeyValueStore(HTTPEndpoint):
         value = ""
         version = ""
         causalMetadata = []
-        reqType = request
         keyCrc = zlib.crc32(key.encode('utf-8'))
         logging.debug(key + " hashed to " + str(keyCrc))
         logging.debug("Looking up replica group for " + str(keyCrc))
@@ -259,7 +257,7 @@ class KeyValueStore(HTTPEndpoint):
         if 'version' in data:  # version
                         version = data['version']
         else:
-            version = random.randint(0, 1000)
+            version = random.randint(0, MAX_VERSION)
             logging.info("No Version in data, generating a unique version id: %s", version)
 
         senderSocket = request.client.host + ":8080"
@@ -305,6 +303,7 @@ class KeyValueStore(HTTPEndpoint):
             req = (key, vs)
             pendingRequests.append(req)
             isUpdating = await kvstorage.dataMgmt(key, vs)
+            groupList[native_shard_id].incrementKeyCount()
             pendingRequests.remove(req)
             logging.debug("forwarding history: %s", version)
             await forwarding(None, version, isFromClient, reqType="HISTORY" )
@@ -351,72 +350,93 @@ class KeyValueStore(HTTPEndpoint):
             data = ""
 
         key = request.path_params['key']
+        version = ""
+        causalMetadata = []
+
         keyCrc = zlib.crc32(key.encode('utf-8'))
         logging.debug(key + " hashed to " + str(keyCrc))
 
-        version = ""
-        causalMetadata = []
 
         if len(key) > 50:  # key
             message = {"error": "Key is too long",
                        "message": "Error in DELETE"}
             return JSONResponse(message, status_code=400, media_type='application/json')
-        if 'version' in data:  # version
-            version = data['version']
-        else:
-            version = random.randint(0, 1000)
-            logging.info(
-                "No Version in data, generating a unique version id: %s", version)
         if 'causal-metadata' in data:  # causalMetadata
             causalMetadata = data['causal-metadata']
             if causalMetadata == "":  # Case empty string is passed
                 causalMetadata = []
+        if 'version' in data:  # version
+            version = data['version']
+        else:
+            version = random.randint(0, MAX_VERSION)
+            logging.info(
+                "No Version in data, generating a unique version id: %s", version)
+        
         senderSocket = request.client.host + ":8080"
         logging.debug("senderSocket check: %s in view: %s, %s",
-                      senderSocket, view, senderSocket in view)
-
+                    senderSocket, view, senderSocket in view)
+        isFromClient = senderSocket not in groupList[native_shard_id].getMembers()
+        
         logging.debug("===Delete at %s", key)
-                # the key in the request didn't hash into our group id, we have to redirect 
+        
+        # the key in the request didn't hash into our group id, we have to redirect 
         # it to the proper replica group rather than process it ourselves.
         # we also are going to be responsible for sending the repsone back 
         # to the client.
-        if(groupID != procNodeID):
-            logging.debug("this key is not in our shard.")
-            return forwardToShard(groupID, key, data, "DELETE")
-        # Second, we set up the task that will update the value,
-        # and the forwarding that will run in the background after
-        # the request is completed
-        # https://www.starlette.io/background/
-        vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
-        req = (key, vs)
-        pendingRequests.append(req)
-        isDeleting = await kvstorage.dataMgmt(key, vs)
-        task = BackgroundTask(
-            forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="DELETE")
-        pendingRequests.remove(req)
+        for i in range(0,len(groupList)-1):
+            logging.debug("i = %s gList[i].hash_id: %s, gList[i+1].hash_id:%s",i,groupList[i].getHashID(),groupList[i+1].getHashID())
+            if keyCrc > groupList[i].hash_id and keyCrc < groupList[i+1].hash_id:
+                logging.debug("found spot for key between %s and %s",i,i+1)
+                if native_shard_id != int(groupList[i+1].getShardID()):
+                    resp = forwardToShard(groupList[i+1].getShardID(),key,data,"DELETE")
+                    return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
+                else:
+                    logging.debug("key is in correct shard. doing normal operations.")
+            elif keyCrc > groupList[len(groupList)-1].getHashID():
+                if int(groupList[0].getShardID()) == native_shard_id:
+                    logging.debug("forwarding within our group")
+                                      
+                else:
+                    logging.debug("forwarding elsewhere")
+                    resp = forwardToShard(groupList[0].getShardID(),key,data,"DELETE")
+                    return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
 
-        # Finally we return
-        causalMetadata.append(version)
-        if isDeleting:
-            shardDeleteID = groupList[procNodeID-1].getHashID()
-            message = {
-                "message": "Deleted successfully",
-                "version": version,
-                "causal-metadata": causalMetadata,
-                "shard-id": shardDeleteID
-            }
-            return JSONResponse(message,
-                                status_code=200,
-                                background=task,
-                                media_type='application/json')
-        else:
-            message = {
-                "message": "Error in DELETE",
-                "error": "Key does not exist"
-            }
-            return JSONResponse(message,
-                                status_code=404,
-                                media_type='application/json')
+
+            # Second, we set up the task that will update the value,
+            # and the forwarding that will run in the background after
+            # the request is completed
+            # https://www.starlette.io/background/
+            vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
+            req = (key, vs)
+            pendingRequests.append(req)
+            isDeleting = await kvstorage.dataMgmt(key, vs)
+            groupList[native_shard_id].decrementKeyCount()
+            pendingRequests.remove(req)
+            logging.debug("forwarding history: %s", version)
+            await forwarding(None, version, isFromClient, reqType="HISTORY" )
+            task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="DELETE")
+
+            # Finally we return
+            causalMetadata.append(version)
+            if isDeleting:
+                message = {
+                    "message": "Deleted successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata,
+                    "shard-id": jsonpickle.encode(native_shard_id)
+                }
+                return JSONResponse(message,
+                                    status_code=200,
+                                    background=task,
+                                    media_type='application/json')
+            else:
+                message = {
+                    "message": "Error in DELETE",
+                    "error": "Key does not exist"
+                }
+                return JSONResponse(message,
+                                    status_code=404,
+                                    media_type='application/json')
 
     # Get Handler for key value store endpoint
     #   returns to the client with the current state of the key
@@ -579,7 +599,7 @@ class Members(HTTPEndpoint):
 @app.route('/key-value-store-shard/shard-id-key-count/{id}')
 def getNumKeys(request):
     message = {"message": "Key count of shard ID retrieved successfully",
-               "shard-id-key-count": groupList[request.path_params['id']].getReplicas()}
+               "shard-id-key-count": groupList[native_shard_id].shard_count}
     return JSONResponse(message,status_code=200,media_type='application/json')
 
 @app.route('/history/')
