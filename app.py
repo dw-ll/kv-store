@@ -560,16 +560,16 @@ def getNumKeys(request):
                "shard-id-key-count": groupList[request.path_params['id']].getReplicas()}
     return JSONResponse(message,status_code=200,media_type='application/json')
 
-@app.route('/history')
-class hist(HTTPEndpoint):
+@app.route('/history/')
+class Hist(HTTPEndpoint):
     async def put(self,request):
+        global kvstorage
         data = await request.json()
         if 'history' in data:
             newHistory = data['history']
             if newHistory not in kvstorage.history:
                 kvstorage.history.append(newHistory)
-                message = {"message": "History updated",
-                            "shard-id-key-count": groupList[request.path_params['id']].getReplicas()}
+                message = {"message": "History updated"}
             else:
                 message = {"message": "version already in history"}                
         else:
