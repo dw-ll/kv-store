@@ -89,7 +89,9 @@ async def forwarding(key, vs, isFromClient, reqType):
         elif reqType == "VIEW_ADD":
             rs = (grequests.put(BASE + address + VIEW_ENDPOINT,
                                 json={'socket-address': vs}) for address in view)
-
+        elif reqType == "HISTORY":
+            rs = (grequests.put(BASE + address + "/history/",
+                                json={'history': vs}) for address in view)
         else:
             logging.error("forwarding reqType invalid!!!")
         grequests.map(rs, exception_handler=exception_handler,
@@ -264,27 +266,9 @@ class KeyValueStore(HTTPEndpoint):
         senderSocket = request.client.host + ":8080"
         logging.debug("senderSocket check: %s in view: %s, %s",
                     senderSocket, view, senderSocket in view)
-
+        isFromClient = senderSocket not in groupList[native_shard_id].getMembers()
         logging.debug("===Put at %s : %s", key, value)
 
-        # Second, we set up the task that will update the value,
-        # add the request to the store incase a copy is made while pending,
-        # and, set up the forwardinging that will run in the background after
-        # the request is completed
-        # https://www.starlette.io/background/
-        
-        vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
-        req = (key, vs)
-        pendingRequests.append(req)
-
-
-        isUpdating = await kvstorage.dataMgmt(key, vs)
-        pendingRequests.remove(req)
-        task = BackgroundTask(
-            forwarding, key=key, vs=vs, isFromClient=senderSocket not in groupList[native_shard_id].getMembers(), reqType="PUT")
-
-        # Finally we return
-        causalMetadata.append(version)
 
         # the key in the request didn't hash into our group id, we have to redirect 
         # it to the proper replica group rather than process it ourselves.
@@ -302,10 +286,6 @@ class KeyValueStore(HTTPEndpoint):
                     # the key hashed out to the proper group id, process and forward like usual.
                 else:
                     logging.debug("key is in correct shard. doing normal operations.")
-                    
-
-                    
-                    
             elif keyCrc > groupList[len(groupList)-1].getHashID():
                 logging.debug("printing shit out bro!!!!!!our shard %s group0shard: %s",native_shard_id,groupList[0].getShardID())
                 if int(groupList[0].getShardID()) == native_shard_id:
@@ -315,6 +295,25 @@ class KeyValueStore(HTTPEndpoint):
                     logging.debug("forwarding elsewhere")
                     resp = forwardToShard(groupList[0].getShardID(),key,data,"PUT")
                     return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
+            
+            # Second, we set up the task that will update the value,
+            # add the request to the store incase a copy is made while pending,
+            # and, set up the forwardinging that will run in the background after
+            # the request is completed
+            # https://www.starlette.io/background/
+            
+            vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
+            req = (key, vs)
+            pendingRequests.append(req)
+            isUpdating = await kvstorage.dataMgmt(key, vs)
+            pendingRequests.remove(req)
+            logging.debug("forwarding history: %s", version)
+            await forwarding(None, version, isFromClient, reqType="HISTORY" )
+            task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="PUT")
+
+            # Finally we return
+            causalMetadata.append(version)
+
             if isUpdating:
                 message = {
                     "message": "Updated successfully",
