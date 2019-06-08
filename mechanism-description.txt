@@ -7,7 +7,10 @@ a shard, such as shard_id, key_count, a list of members inside that shard, and s
 own IP. It cycles through it's VIEW and does the same for every other replica. Placement of replicas uses a successor-like mechanism. If the hash(IP) < hash(group#), then the replica
 with that respective IP will be placed into that ReplicaGroup (shard). In the events of a freshly booted node, we run the same type of initializing code but since we don't 
 have a shard_count, we have to query another replica for it's current shard_count which we trust is the correct at the moment of the boot. Other logistical requests are sent, such as 
-adding the new node to the right ReplicaGroup across all IP's that are alive, as well as adding it into their views, and etc.
+adding the new node to the right ReplicaGroup across all IP's that are alive, as well as adding it into their views, and etc. we pass the incomming keys through the crc32 algorithm
+and then place them on the ring by looping thorough our ReplicaGroup list and fining the ReplicaGroup that would be the successor of the key. We then forward the put request to the 
+first member of that ReplicaGroup list. When that member recieves the forwarded put request from another ReplicaGroup it forwards the put request to the rest of the 
+members in its ReplicaGroup.
 
 
 ----- DOWN REPLICAS -----
