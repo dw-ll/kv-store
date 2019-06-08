@@ -107,14 +107,20 @@ async def forwarding(key, vs, isFromClient, reqType):
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
                       key, reqType, groupList[native_shard_id].getMembers())
         if reqType == "PUT":
+            alist = groupList[native_shard_id].getMembers().copy()
+            if OWN_SOCKET in list:
+                list.remove(OWN_SOCKET)
             rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
                                 json={'value': vs.getValue(),
                                       'version': vs.getVersion(),
-                                      'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+                                      'causal-metadata': vs.causalMetadata}) for address in alist)
         elif reqType == "DELETE":
+            alist = groupList[native_shard_id].getMembers().copy()
+            if OWN_SOCKET in list:
+                list.remove(OWN_SOCKET)
             rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
                                    json={'version': vs.getVersion(),
-                                         'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+                                         'causal-metadata': vs.causalMetadata}) for address in alist)
         elif reqType == "VIEW_DELETE":
             rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
                                    json={'socket-address': vs}) for address in view)
@@ -329,7 +335,7 @@ class KeyValueStore(HTTPEndpoint):
             req = (key, vs)
             pendingRequests.append(req)
             isUpdating = await kvstorage.dataMgmt(key, vs)
-            getRepGroup(OWN_SOCKET).incrementKeyCount()
+            groupList[native_shard_id].incrementKeyCount()
             pendingRequests.remove(req)
             logging.debug("forwarding history: %s", version)
             await forwarding(None, version, isFromClient, reqType="HISTORY" )
@@ -436,7 +442,7 @@ class KeyValueStore(HTTPEndpoint):
             req = (key, vs)
             pendingRequests.append(req)
             isDeleting = await kvstorage.dataMgmt(key, vs)
-            getRepGroup(OWN_SOCKET).decrementKeyCount()
+            groupList[native_shard_id].decrementKeyCount()
             pendingRequests.remove(req)
             logging.debug("forwarding history: %s", version)
             await forwarding(None, version, isFromClient, reqType="HISTORY" )
