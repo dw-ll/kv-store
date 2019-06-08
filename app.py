@@ -255,6 +255,36 @@ class KeyValueStore(HTTPEndpoint):
             causalMetadata = data['causal-metadata']
             if causalMetadata == "":  # Case empty string is passed
                 causalMetadata = []
+        if 'version' in data:  # version
+                        version = data['version']
+        else:
+            version = random.randint(0, 1000)
+            logging.info("No Version in data, generating a unique version id: %s", version)
+
+        senderSocket = request.client.host + ":8080"
+        logging.debug("senderSocket check: %s in view: %s, %s",
+                    senderSocket, view, senderSocket in view)
+
+        logging.debug("===Put at %s : %s", key, value)
+
+        # Second, we set up the task that will update the value,
+        # add the request to the store incase a copy is made while pending,
+        # and, set up the forwardinging that will run in the background after
+        # the request is completed
+        # https://www.starlette.io/background/
+        
+        vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
+        req = (key, vs)
+        pendingRequests.append(req)
+
+
+        isUpdating = await kvstorage.dataMgmt(key, vs)
+        pendingRequests.remove(req)
+        task = BackgroundTask(
+            forwarding, key=key, vs=vs, isFromClient=senderSocket not in groupList[native_shard_id].getMembers(), reqType="PUT")
+
+        # Finally we return
+        causalMetadata.append(version)
 
         # the key in the request didn't hash into our group id, we have to redirect 
         # it to the proper replica group rather than process it ourselves.
@@ -262,70 +292,51 @@ class KeyValueStore(HTTPEndpoint):
         # to the client.
         for i in range(0,len(groupList)-1):
             logging.debug("i = %s gList[i].hash_id: %s, gList[i+1].hash_id:%s",i,groupList[i].getHashID(),groupList[i+1].getHashID())
+            
             if keyCrc > groupList[i].hash_id and keyCrc < groupList[i+1].hash_id:
                 logging.debug("found spot for key between %s and %s",i,i+1)
-                if native_shard_id != groupList[i+1].getShardID():
+                if native_shard_id != int(groupList[i+1].getShardID()):
                     #forward to other shard group
                      resp = forwardToShard(groupList[i+1].getShardID(),key,data,"PUT")
                      return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
                     # the key hashed out to the proper group id, process and forward like usual.
                 else:
                     logging.debug("key is in correct shard. doing normal operations.")
-                    if 'version' in data:  # version
-                        version = data['version']
-                    else:
-                        version = random.randint(0, 1000)
-                        logging.info("No Version in data, generating a unique version id: %s", version)
+                    
 
-                    senderSocket = request.client.host + ":8080"
-                    logging.debug("senderSocket check: %s in view: %s, %s",
-                                senderSocket, view, senderSocket in view)
-
-                    logging.debug("===Put at %s : %s", key, value)
-
-                    # Second, we set up the task that will update the value,
-                    # add the request to the store incase a copy is made while pending,
-                    # and, set up the forwardinging that will run in the background after
-                    # the request is completed
-                    # https://www.starlette.io/background/
-                    vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
-                    req = (key, vs)
-                    pendingRequests.append(req)
-
-                    isUpdating = await kvstorage.dataMgmt(key, vs)
-                    pendingRequests.remove(req)
-                    task = BackgroundTask(
-                        forwarding, key=key, vs=vs, isFromClient=senderSocket not in groupList[native_shard_id].getMembers(), reqType="PUT")
-
-                    # Finally we return
-                    causalMetadata.append(version)
-                    if isUpdating:
-                        message = {
-                            "message": "Updated successfully",
-                            "version": version,
-                            "causal-metadata": causalMetadata,
-                            "shard-id": jsonpickle.encode(native_shard_id)
-                        }
-                        return JSONResponse(message,
-                                            status_code=200,
-                                            background=task,
-                                            media_type='application/json')
-                    else:
-                        message = {
-                            "message": "Added successfully",
-                            "version": version,
-                            "causal-metadata": causalMetadata,
-                            "shard-id": jsonpickle.encode(native_shard_id)
-                        }
-                        return JSONResponse(message,
-                                            status_code=201,
-                                            background=task,
-                                            media_type='application/json')
+                    
+                    
             elif keyCrc > groupList[len(groupList)-1].getHashID():
-                logging.debug("printing shit out bro!!!!!!")
-                if groupList[i+1].getHashID() < keyCrc :
+                logging.debug("printing shit out bro!!!!!!our shard %s group0shard: %s",native_shard_id,groupList[0].getShardID())
+                if int(groupList[0].getShardID()) == native_shard_id:
+                    logging.debug("forwarding within our group")
+                                      
+                else:
+                    logging.debug("forwarding elsewhere")
                     resp = forwardToShard(groupList[0].getShardID(),key,data,"PUT")
                     return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
+            if isUpdating:
+                message = {
+                    "message": "Updated successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata,
+                    "shard-id": jsonpickle.encode(native_shard_id)
+                        }
+                return JSONResponse(message,
+                                    status_code=200,
+                                    background=task,
+                                    media_type='application/json')
+            else:
+                message = {
+                    "message": "Added successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata,
+                    "shard-id": jsonpickle.encode(native_shard_id)
+                }
+                return JSONResponse(message,
+                                    status_code=201,
+                                    background=task,
+                                    media_type='application/json')
 
 
     async def delete(self, request):
