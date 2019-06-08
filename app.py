@@ -40,6 +40,7 @@ TIMEOUT_TIME = 3
 shardIDs = ""
 view = views.ViewList(os.environ['VIEW'], OWN_SOCKET)
 groupList = []
+pendingRequests = []
 idList = []
 ip = zlib.crc32(OWN_SOCKET.encode('utf-8'))
 
@@ -229,6 +230,7 @@ class KeyValueStore(HTTPEndpoint):
         #   causalMetadata: list of versions that must be completed before
         #                           value is added to the key
         global groupList
+        global pendingRequests
         data = await request.json()
         
         key = request.path_params['key']
@@ -264,7 +266,8 @@ class KeyValueStore(HTTPEndpoint):
                 logging.debug("found spot for key between %s and %s",i,i+1)
                 if native_shard_id != groupList[i+1].getShardID():
                     #forward to other shard group
-                    return forwardToShard(groupList[i+1].getShardID(),key,data,"PUT")
+                     resp = forwardToShard(groupList[i+1].getShardID(),key,data,"PUT")
+                     return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
                     # the key hashed out to the proper group id, process and forward like usual.
                 else:
                     logging.debug("key is in correct shard. doing normal operations.")
@@ -291,9 +294,8 @@ class KeyValueStore(HTTPEndpoint):
 
                     isUpdating = await kvstorage.dataMgmt(key, vs)
                     pendingRequests.remove(req)
-                    task = BackgroundTask(q1
-                        forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
-
+                    task = BackgroundTask(
+                        forwarding, key=key, vs=vs, isFromClient=senderSocket not in groupList[native_shard_id].getMembers(), reqType="PUT")
 
                     # Finally we return
                     causalMetadata.append(version)
@@ -302,7 +304,7 @@ class KeyValueStore(HTTPEndpoint):
                             "message": "Updated successfully",
                             "version": version,
                             "causal-metadata": causalMetadata,
-                            "shard-id": str(native_shard_id)
+                            "shard-id": jsonpickle.encode(native_shard_id)
                         }
                         return JSONResponse(message,
                                             status_code=200,
@@ -313,15 +315,17 @@ class KeyValueStore(HTTPEndpoint):
                             "message": "Added successfully",
                             "version": version,
                             "causal-metadata": causalMetadata,
-                            "shard-id": str(native_shard_id)
+                            "shard-id": jsonpickle.encode(native_shard_id)
                         }
                         return JSONResponse(message,
                                             status_code=201,
                                             background=task,
                                             media_type='application/json')
-            elif i == len(groupList)-1 :
+            elif keyCrc > groupList[len(groupList)-1].getHashID():
+                logging.debug("printing shit out bro!!!!!!")
                 if groupList[i+1].getHashID() < keyCrc :
-                    return forwardToShard(groupList[i+1].getShardID(),key,data,"PUT")
+                    resp = forwardToShard(groupList[0].getShardID(),key,data,"PUT")
+                    return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
 
 
     async def delete(self, request):
@@ -410,10 +414,6 @@ class KeyValueStore(HTTPEndpoint):
     async def get(self, request):
         key = request.path_params['key']
         keyCrc = zlib.crc32(key.encode('utf-8'))
-        logging.debug(key + " hashed to " + keyCrc.hexdigest())
-        if(groupID != procNodeID):
-            logging.debug("this key is not in our shard.")
-            return forwardToShard(groupID, key, data, "GET")
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
@@ -625,16 +625,43 @@ def forwardToShard(shardID, key, data, requestType):
         # this one ^
 
         destinationAddress = BASE + addr + KVS_ENDPOINT + key
-        logging.debug(destinationAddress)
+        logging.debug("forwarding destination: " +destinationAddress)
         if requestType == "PUT": 
-            return grequests.put(destinationAddress, data)
+            rs =  grequests.put(destinationAddress, json =  data)
         elif requestType == "DELETE":
-            return grequests.delete(destinationAddress, data)
+            rs =  grequests.delete(destinationAddress,json =  data)
         elif requestType == "GET":
-            return grequests.get(destinationAddress, data)
+            rs =  grequests.get(destinationAddress,json = data)
         else:
             logging.error("Oops I sharded! Changing pants\nforwarding reqType invalid!!!")
 
+        resp = grequests.map([rs])
+        return resp[0]
+async def forwarding(key, vs, isFromClient, reqType):
+    if isFromClient:
+        logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
+                      key, reqType, groupList[native_shard_id].getMembers())
+       # logging.debug(BASE + address + KVS_ENDPOINT + key)
+        if reqType == "PUT":
+            rs = (grequests.put(BASE + address + KVS_ENDPOINT + key,
+                                json={'value': vs.getValue(),
+                                      'version': vs.getVersion(),
+                                      'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+        elif reqType == "DELETE":
+            rs = (grequests.delete(BASE + address + KVS_ENDPOINT + key,
+                                   json={'version': vs.getVersion(),
+                                         'causal-metadata': vs.causalMetadata}) for address in groupList[native_shard_id].getMembers())
+        elif reqType == "VIEW_DELETE":
+            rs = (grequests.delete(BASE + address + VIEW_ENDPOINT,
+                                   json={'socket-address': vs}) for address in groupList[native_shard_id].getMembers())
+        else:
+            logging.error("forwarding reqType invalid!!!")
+        grequests.map(rs, exception_handler=exception_handler,
+                      gtimeout=TIMEOUT_TIME)
+        logging.debug("putforwarding Finished")
+    else:
+        logging.debug(
+            "request is from a replica (not a client), not forwardinging")
 
 
 def exception_handler(request, exception):
