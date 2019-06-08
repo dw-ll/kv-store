@@ -74,28 +74,33 @@ def balance(index, fullList):
 def rebalance(index, count, list):
    numReplicas = len(view.array())
    logging.debug("Number of replicas: %s", numReplicas)
+   logging.debug("Request shard count: %s",count)
    if (2*count) > numReplicas:
         message = {
             "message": "Not enough nodes to provide fault-tolerance with the given shard count!"}
         return JSONResponse(message, status_code=400, media_type='application/json')
    else:
        # add a new ReplicaGroup to groupList
-       group = "group" + index
+       group = "group" + str(index)
        tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
        logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
        newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
        groupList.append(newShard)
-       newShardIndex = len(list)
-       shardIDs += str(newShardIndex)
-       idList.append(newShardIndex)
+       logging.debug("Added new shard to groupList.")
+       shardIDs += str(index)
+       idList.append(index)
+       logging.debug("Added index %s to id list.",index)
        rs = (grequests.put(BASE + '/add-shard/'+str(index),
                            )for address in view)
        grequests.map(rs)
 
        for i, group in enumerate(list):
            if i != index and len(group.getMembers()) > 2:
+               logging.debug("Group %s before removal: %s",group.getNodeID(),group.getMembers())
                tempIP = group.shard_id_members.pop(0)
-               groupList[newShardIndex].addGroupMember(tempIP)
+               logging.debug("%s removed from group ",tempIP,group.getNodeID())
+               groupList[index].addGroupMember(tempIP)
+               logging.debug("Added %s to group %s.",tempIP,groupList[index].getNodeID())
 
 async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
@@ -464,6 +469,29 @@ class KeyValueStore(HTTPEndpoint):
     async def get(self, request):
         key = request.path_params['key']
         keyCrc = zlib.crc32(key.encode('utf-8'))
+        data = {}
+        for i in range(0,len(groupList)-1):
+            logging.debug("i = %s gList[i].hash_id: %s, gList[i+1].hash_id:%s",i,groupList[i].getHashID(),groupList[i+1].getHashID())
+            
+            if keyCrc > groupList[i].hash_id and keyCrc < groupList[i+1].hash_id:
+                logging.debug("found spot for key between %s and %s",i,i+1)
+                if native_shard_id != int(groupList[i+1].getShardID()):
+                    #forward to other shard group
+                    resp = forwardToShard(groupList[i+1].getShardID(),key,data,"GET")
+                    return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
+                    # the key hashed out to the proper group id, process and forward like usual.
+                else:
+                    logging.debug("return value")
+                    break
+            elif keyCrc > groupList[len(groupList)-1].getHashID():
+                logging.debug("printing shit out bro!!!!!!our shard %s group0shard: %s",native_shard_id,groupList[0].getShardID())
+                if int(groupList[0].getShardID()) == native_shard_id:
+                    logging.debug("return value") 
+                    break                                       
+                else:
+                    logging.debug("forwarding elsewhere")
+                    resp = forwardToShard(groupList[0].getShardID(),key,data,"GET")
+                    return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
         if key in kvstorage.kvs:
             # TODO: Import kvs properly
             vs = kvstorage.kvs[key]
@@ -679,15 +707,52 @@ class Correct(HTTPEndpoint):
         message = {"message": "Added new member."}
         return JSONResponse(message, status_code=200, media_type='application/json')
 
-
 @app.route('/key-value-store-shard/reshard')
 class Reshard(HTTPEndpoint):
    async def put(self, request):
+        global shardIDs
+        global idList
+        global groupList
+        logging.debug("Reshard has been requested.")
+        data = await request.json()
+        requestedShardCount = data['shard-count']
+        newIndex = len(groupList)
+        numReplicas = len(view.array())
+        logging.debug("Number of replicas: %s", numReplicas)
+        logging.debug("Request shard count: %s", requestedShardCount)
+        if (2*requestedShardCount) > numReplicas:
+                message = {
+                    "message": "Not enough nodes to provide fault-tolerance with the given shard count!"}
+                return JSONResponse(message, status_code=400, media_type='application/json')
+        else:
+            # add a new ReplicaGroup to groupList
+            group = "group" + str(newIndex)
+            tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
+            logging.debug(group + " hashed to "+str(tempGroupID))
+            newShard = shard.ReplicaGroup(newIndex, tempGroupID, 0, [], 0, {})
+            groupList.append(newShard)
+            logging.debug("Added new shard to groupList.")
+            shardIDs += str(newIndex)
+            idList.append(newIndex)
 
-       data = await request.json()
-       requestedShardCount = data['shard-count']
-       newIndex = len(groupList)
-       rebalance(newIndex, requestedShardCount, groupList)
+            # tell other replicas in our VIEW to add the new Replica Group to their GroupList
+            logging.debug("Added index %s to id list.", newIndex)
+            rs = (grequests.put(BASE + address+ '/add-shard/'+str(newIndex),
+                                )for address in view)
+            grequests.map(rs)
+
+            # We need to do the balancing here
+            for i, group in enumerate(groupList):
+                if i != newIndex and len(group.getMembers()) > 2:
+                    logging.debug("Group %s before removal: %s",
+                                    group.getShardID(), group.getMembers())
+                    tempIP = group.shard_id_members.pop(0)
+                    logging.debug("%s removed from group ",
+                                    tempIP, group.getShardID())
+                    groupList[newIndex].addGroupMember(tempIP)
+                    logging.debug("Added %s to group %s.", tempIP,
+                                    groupList[newIndex].getShardID())
+
 
 
 @app.route('/add-shard/{index}')
@@ -698,7 +763,7 @@ class Build(HTTPEndpoint):
        index = request.path_params['index']
        #newAddress = data['socket-address']
        #groupList[int(theShard)].addGroupMember(newAddress)
-       group = "group" + index
+       group = "group" + str(index)
        tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
        logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
        newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
