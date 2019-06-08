@@ -577,12 +577,12 @@ def getShardIds(self):
 
 # Return the Replica Group ID that this process belongs to.
 @app.route('/key-value-store-shard/node-shard-id')
-class ShardMembers:
-    async def get(self):
+class ShardMembers(HTTPEndpoint):
+    async def get(self,request):
         logging.debug("Shard ID to be returned: %s",native_shard_id)
         message = {
             "message": "Shard ID of the node retrieved successfully", 
-            "shard-id": native_shard_id}
+            "shard-id": jsonpickle.encode(native_shard_id)}
         return JSONResponse(message,status_code=200,media_type='application/json')
     
 
@@ -678,7 +678,7 @@ class Correct(HTTPEndpoint):
 
 
 @app.route('/member-list/{id}')
-class Correct(HTTPEndpoint):
+class MemList(HTTPEndpoint):
     async def put(self, request):
         data = await request.json()
         theShard = request.path_params['id']
