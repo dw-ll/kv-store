@@ -670,10 +670,12 @@ class Correct(HTTPEndpoint):
         message = {"message": "Added new member."}
         return JSONResponse(message, status_code=200, media_type='application/json')
 
-
 @app.route('/key-value-store-shard/reshard')
 class Reshard(HTTPEndpoint):
    async def put(self, request):
+        global shardIDs
+        global idList
+        global groupList
         logging.debug("Reshard has been requested.")
         data = await request.json()
         requestedShardCount = data['shard-count']
@@ -689,27 +691,30 @@ class Reshard(HTTPEndpoint):
             # add a new ReplicaGroup to groupList
             group = "group" + str(newIndex)
             tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
-            logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+            logging.debug(group + " hashed to "+str(tempGroupID))
             newShard = shard.ReplicaGroup(newIndex, tempGroupID, 0, [], 0, {})
             groupList.append(newShard)
             logging.debug("Added new shard to groupList.")
             shardIDs += str(newIndex)
             idList.append(newIndex)
+
+            # tell other replicas in our VIEW to add the new Replica Group to their GroupList
             logging.debug("Added index %s to id list.", newIndex)
-            rs = (grequests.put(BASE + '/add-shard/'+str(newIndex),
+            rs = (grequests.put(BASE + address+ '/add-shard/'+str(newIndex),
                                 )for address in view)
             grequests.map(rs)
 
-            for i, group in enumerate(list):
+            # We need to do the balancing here
+            for i, group in enumerate(groupList):
                 if i != newIndex and len(group.getMembers()) > 2:
                     logging.debug("Group %s before removal: %s",
-                                    group.getNodeID(), group.getMembers())
+                                    group.getShardID(), group.getMembers())
                     tempIP = group.shard_id_members.pop(0)
                     logging.debug("%s removed from group ",
-                                    tempIP, group.getNodeID())
+                                    tempIP, group.getShardID())
                     groupList[newIndex].addGroupMember(tempIP)
                     logging.debug("Added %s to group %s.", tempIP,
-                                    groupList[newIndex].getNodeID())
+                                    groupList[newIndex].getShardID())
 
 
 
