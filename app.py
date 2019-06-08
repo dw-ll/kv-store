@@ -69,38 +69,6 @@ def balance(index, fullList):
                 logging.debug("Starving Group After Append: %s",
                               fullList[index].getReplicas())
 
-
-def rebalance(index, count, list):
-   numReplicas = len(view.array())
-   logging.debug("Number of replicas: %s", numReplicas)
-   logging.debug("Request shard count: %s",count)
-   if (2*count) > numReplicas:
-        message = {
-            "message": "Not enough nodes to provide fault-tolerance with the given shard count!"}
-        return JSONResponse(message, status_code=400, media_type='application/json')
-   else:
-       # add a new ReplicaGroup to groupList
-       group = "group" + str(index)
-       tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
-       logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
-       newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
-       groupList.append(newShard)
-       logging.debug("Added new shard to groupList.")
-       shardIDs += str(index)
-       idList.append(index)
-       logging.debug("Added index %s to id list.",index)
-       rs = (grequests.put(BASE + '/add-shard/'+str(index),
-                           )for address in view)
-       grequests.map(rs)
-
-       for i, group in enumerate(list):
-           if i != index and len(group.getMembers()) > 2:
-               logging.debug("Group %s before removal: %s",group.getNodeID(),group.getMembers())
-               tempIP = group.shard_id_members.pop(0)
-               logging.debug("%s removed from group ",tempIP,group.getNodeID())
-               groupList[index].addGroupMember(tempIP)
-               logging.debug("Added %s to group %s.",tempIP,groupList[index].getNodeID())
-
 async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
@@ -718,9 +686,9 @@ class Reshard(HTTPEndpoint):
             newShard = shard.ReplicaGroup(newIndex, tempGroupID, 0, [], 0, {})
             groupList.append(newShard)
             logging.debug("Added new shard to groupList.")
-            shardIDs += str(newIndex)
-            idList.append(newIndex)
-
+           
+            idList.append(str(newIndex))
+            shardIDs = ",".join(idList)
             # tell other replicas in our VIEW to add the new Replica Group to their GroupList
             logging.debug("Added index %s to id list.", newIndex)
             rs = (grequests.put(BASE + address+ '/add-shard/'+str(newIndex),
@@ -733,11 +701,16 @@ class Reshard(HTTPEndpoint):
                     logging.debug("Group %s before removal: %s",
                                     group.getShardID(), group.getMembers())
                     tempIP = group.shard_id_members.pop(0)
-                    logging.debug("%s removed from group ",
+                    logging.debug("%s removed from group %s",
                                     tempIP, group.getShardID())
                     groupList[newIndex].addGroupMember(tempIP)
                     logging.debug("Added %s to group %s.", tempIP,
                                     groupList[newIndex].getShardID())
+            for group in groupList:
+                logging.debug("Group %s:%s",group.getShardID(),group.getMembers())
+            message = {
+                    "message":"Resharding done successfully"}
+            return JSONResponse(message, status_code=200, media_type='application/json')
 
 
 
@@ -745,23 +718,24 @@ class Reshard(HTTPEndpoint):
 class Build(HTTPEndpoint):
    async def put(self, request):
        global groupList
+       global shardIDs
+       global idList
        data = await request.json()
        index = request.path_params['index']
        #newAddress = data['socket-address']
        #groupList[int(theShard)].addGroupMember(newAddress)
        group = "group" + str(index)
        tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
-       logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+       logging.debug(group+" hashed to "+str(tempGroupID))
        newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
        groupList.append(newShard)
-       newShardIndex = len(list)
-       shardIDs += str(newShardIndex)
-       idList.append(newShardIndex)
+       idList.append(newIndex)
+       shardIDs = ",".join(idList)
 
        for i, group in enumerate(groupList):
            if i != index and len(group.getMembers()) > 2:
                tempIP = group.shard_id_members.pop(0)
-               groupList[newShardIndex].addGroupMember(tempIP)
+               groupList[index].addGroupMember(tempIP)
 
        message = {"message": "Added new member."}
        return JSONResponse(message, status_code=200, media_type='application/json')
