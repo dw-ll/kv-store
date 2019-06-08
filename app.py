@@ -296,7 +296,7 @@ class KeyValueStore(HTTPEndpoint):
 
                     isUpdating = await kvstorage.dataMgmt(key, vs)
                     pendingRequests.remove(req)
-                    task = BackgroundTask(
+                    task = BackgroundTask(q1
                         forwarding, key=key, vs=vs, isFromClient=senderSocket not in view, reqType="PUT")
 
 
@@ -505,7 +505,7 @@ async def store(request):
     message = {
         "kvs": jsonpickle.encode(kvstorage.kvs),
         "history": jsonpickle.encode(kvstorage.history),
-        "view": jsonpickle.encode(view),
+        "view": jsonpickle.encode(tView),
         "shard-ids": jsonpickle.encode(groupList),
         "shard-count": jsonpickle.encode(shard_count),
         "group-list": jsonpickle.encode(groupList),
