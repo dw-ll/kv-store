@@ -700,6 +700,9 @@ class Reshard(HTTPEndpoint):
                 return JSONResponse(message, status_code=400, media_type='application/json')
         else:
             # add a new ReplicaGroup to groupList
+            for group in groupList:
+                logging.debug("Group %s:%s before rotation", group.getShardID(),
+                              group.getMembers())
             group = "group" + str(newIndex)
             tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
             logging.debug(group + " hashed to "+str(tempGroupID))
@@ -711,7 +714,9 @@ class Reshard(HTTPEndpoint):
             shardIDs = ",".join(idList)
             # tell other replicas in our VIEW to add the new Replica Group to their GroupList
             logging.debug("Added index %s to id list.", newIndex)
-            rs = (grequests.put(BASE + address+ '/add-shard/'+str(newIndex),
+            for i,v in enumerate(view):
+                logging.debug("Broadcasting add-shard to %s%s/add-shard/%s",BASE,view[i],newIndex)
+            rs = (grequests.put(BASE +str(address)+ '/add-shard/'+str(newIndex),
                                 )for address in view)
             grequests.map(rs)
 
@@ -727,7 +732,7 @@ class Reshard(HTTPEndpoint):
                     logging.debug("Added %s to group %s.", tempIP,
                                     groupList[newIndex].getShardID())
             for group in groupList:
-                logging.debug("Group %s:%s",group.getShardID(),group.getMembers())
+                logging.debug("Group %s after rotation:%s",group.getShardID(),group.getMembers())
             message = {
                     "message":"Resharding done successfully"}
             return JSONResponse(message, status_code=200, media_type='application/json')
@@ -740,8 +745,10 @@ class Build(HTTPEndpoint):
        global groupList
        global shardIDs
        global idList
+       logging.debug("Inside add-shard at: %s",OWN_SOCKET)
        data = await request.json()
        index = request.path_params['index']
+       logging.debug("Adding shard %s",index)
        #newAddress = data['socket-address']
        #groupList[int(theShard)].addGroupMember(newAddress)
        group = "group" + str(index)
