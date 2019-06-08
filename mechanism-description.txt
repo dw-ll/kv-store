@@ -1,17 +1,13 @@
 MECHANISM NOTES
 
------ CAUSAL DEPENDENCY -----
-valueStore is an object nested in our KVS dictionary. 
-With a <key> as a key to the dictionary, valueStore will be the value coorelated to that given key.
-Inside valueStore are a few lists: values, versions and causalMetadata.
-Values and versions get updated in parallel after it is operating on a request, these lists eventually get 
-returned inside a response object, when we encode into a json object using kvsEncoder.
-These lists either end up at a new replica when it dies and gets booted again, or when a replica requests it.
-causalMetadata gets updated accordingly when an operation is about to send a response back to a client/replica.
-To track and enforce causal consistency, we check an incoming causalMetadata list and treat is as the explicit causal dependency
-list given in the assignment spec.
-We then examine another local list named "history". While history doesn't match causalMetadata, we have to run queued requests at a given replica.
-
+----- Distributed Hash Table -----
+For our structure, we were partly influenced by the Chord P2P lookup mechanism. We use the crc32 algorithm to do all of our hashing.  At boot, a node will create it's own groupList.
+Given a shard_count, that node will create a groupList of ReplicaGroup objects. A ReplicaGroup object contains all of the state for
+a shard, such as shard_id, key_count, a list of members inside that shard, and so on. Next, that node will add itself into one of the shards based the hash of it's 
+own IP. It cycles through it's VIEW and does the same for every other replica. Placement of replicas uses a successor-like mechanism. If the hash(IP) < hash(group#), then the replica
+with that respective IP will be placed into that ReplicaGroup (shard). In the events of a freshly booted node, we run the same type of initializing code but since we don't 
+have a shard_count, we have to query another replica for it's current shard_count which we trust is the correct at the moment of the boot. Other logistical requests are sent, such as 
+adding the new node to the right ReplicaGroup across all IP's that are alive, as well as adding it into their views, and etc.
 
 
 ----- DOWN REPLICAS -----
