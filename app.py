@@ -70,6 +70,38 @@ def balance(index, fullList):
                 logging.debug("Starving Group After Append: %s",
                               fullList[index].getReplicas())
 
+
+def rebalance(index, count, list):
+   numReplicas = len(view.array())
+   logging.debug("Number of replicas: %s", numReplicas)
+   logging.debug("Request shard count: %s",count)
+   if (2*count) > numReplicas:
+        message = {
+            "message": "Not enough nodes to provide fault-tolerance with the given shard count!"}
+        return JSONResponse(message, status_code=400, media_type='application/json')
+   else:
+       # add a new ReplicaGroup to groupList
+       group = "group" + str(index)
+       tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
+       logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+       newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
+       groupList.append(newShard)
+       logging.debug("Added new shard to groupList.")
+       shardIDs += str(index)
+       idList.append(index)
+       logging.debug("Added index %s to id list.",index)
+       rs = (grequests.put(BASE + '/add-shard/'+str(index),
+                           )for address in view)
+       grequests.map(rs)
+
+       for i, group in enumerate(list):
+           if i != index and len(group.getMembers()) > 2:
+               logging.debug("Group %s before removal: %s",group.getNodeID(),group.getMembers())
+               tempIP = group.shard_id_members.pop(0)
+               logging.debug("%s removed from group %s",tempIP,group.getNodeID())
+               groupList[index].addGroupMember(tempIP)
+               logging.debug("Added %s to group %s.",tempIP,groupList[index].getNodeID())
+
 async def forwarding(key, vs, isFromClient, reqType):
     if isFromClient:
         logging.debug("putforwarding at: Key: %s ReqType: %s View: %s",
@@ -97,7 +129,9 @@ async def forwarding(key, vs, isFromClient, reqType):
                                 json={'socket-address': vs}) for address in view)
         elif reqType == "HISTORY":
             rs = (grequests.put(BASE + address + "/history/",
-                                json={'history': vs}) for address in view)
+                                json={'history': vs,
+                                      'shard-id': native_shard_id,
+                                      'key-count': groupList[native_shard_id].key_count}) for address in view)
         else:
             logging.error("forwarding reqType invalid!!!")
         grequests.map(rs, exception_handler=exception_handler,
@@ -299,41 +333,42 @@ class KeyValueStore(HTTPEndpoint):
             # the request is completed
             # https://www.starlette.io/background/
             
-        vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
-        req = (key, vs)
-        pendingRequests.append(req)
-        isUpdating = await kvstorage.dataMgmt(key, vs)
-        groupList[native_shard_id].incrementKeyCount()
-        pendingRequests.remove(req)
-        logging.debug("forwarding history: %s", version)
-        await forwarding(None, version, isFromClient, reqType="HISTORY" )
-        task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="PUT")
+            vs = kvstorage.ValueStore(value, version, causalMetadata.copy())
+            req = (key, vs)
+            pendingRequests.append(req)
+            isUpdating = await kvstorage.dataMgmt(key, vs)
 
-        # Finally we return
-        causalMetadata.append(version)
+            groupList[native_shard_id].incrementKeyCount()
+            pendingRequests.remove(req)
+            logging.debug("forwarding history: %s", version)
+            await forwarding(None, version, isFromClient, reqType="HISTORY" )
+            task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="PUT")
 
-        if isUpdating:
-            message = {
-                "message": "Updated successfully",
-                "version": version,
-                "causal-metadata": causalMetadata,
-                "shard-id": jsonpickle.encode(native_shard_id)
-                    }
-            return JSONResponse(message,
-                                status_code=200,
-                                background=task,
-                                media_type='application/json')
-        else:
-            message = {
-                "message": "Added successfully",
-                "version": version,
-                "causal-metadata": causalMetadata,
-                "shard-id": jsonpickle.encode(native_shard_id)
-            }
-            return JSONResponse(message,
-                                status_code=201,
-                                background=task,
-                                media_type='application/json')
+            # Finally we return
+            causalMetadata.append(version)
+
+            if isUpdating:
+                message = {
+                    "message": "Updated successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata,
+                    "shard-id": jsonpickle.encode(native_shard_id)
+                        }
+                return JSONResponse(message,
+                                    status_code=200,
+                                    background=task,
+                                    media_type='application/json')
+            else:
+                message = {
+                    "message": "Added successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata,
+                    "shard-id": jsonpickle.encode(native_shard_id)
+                }
+                return JSONResponse(message,
+                                    status_code=201,
+                                    background=task,
+                                    media_type='application/json')
 
 
     async def delete(self, request):
@@ -392,11 +427,9 @@ class KeyValueStore(HTTPEndpoint):
                     return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
                 else:
                     logging.debug("key is in correct shard. doing normal operations.")
-                    break
             elif keyCrc > groupList[len(groupList)-1].getHashID():
                 if int(groupList[0].getShardID()) == native_shard_id:
                     logging.debug("forwarding within our group")
-                    break
                                       
                 else:
                     logging.debug("forwarding elsewhere")
@@ -404,41 +437,41 @@ class KeyValueStore(HTTPEndpoint):
                     return JSONResponse(resp.json(),status_code=resp.status_code,media_type='application/json')
 
 
-        # Second, we set up the task that will update the value,
-        # and the forwarding that will run in the background after
-        # the request is completed
-        # https://www.starlette.io/background/
-        vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
-        req = (key, vs)
-        pendingRequests.append(req)
-        isDeleting = await kvstorage.dataMgmt(key, vs)
-        groupList[native_shard_id].decrementKeyCount()
-        pendingRequests.remove(req)
-        logging.debug("forwarding history: %s", version)
-        await forwarding(None, version, isFromClient, reqType="HISTORY" )
-        task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="DELETE")
+            # Second, we set up the task that will update the value,
+            # and the forwarding that will run in the background after
+            # the request is completed
+            # https://www.starlette.io/background/
+            vs = kvstorage.ValueStore(None, version, causalMetadata.copy())
+            req = (key, vs)
+            pendingRequests.append(req)
+            isDeleting = await kvstorage.dataMgmt(key, vs)
+            groupList[native_shard_id].decrementKeyCount()
+            pendingRequests.remove(req)
+            logging.debug("forwarding history: %s", version)
+            await forwarding(None, version, isFromClient, reqType="HISTORY" )
+            task = BackgroundTask( forwarding, key=key, vs=vs, isFromClient=isFromClient, reqType="DELETE")
 
-        # Finally we return
-        causalMetadata.append(version)
-        if isDeleting:
-            message = {
-                "message": "Deleted successfully",
-                "version": version,
-                "causal-metadata": causalMetadata,
-                "shard-id": jsonpickle.encode(native_shard_id)
-            }
-            return JSONResponse(message,
-                                status_code=200,
-                                background=task,
-                                media_type='application/json')
-        else:
-            message = {
-                "message": "Error in DELETE",
-                "error": "Key does not exist"
-            }
-            return JSONResponse(message,
-                                status_code=404,
-                                media_type='application/json')
+            # Finally we return
+            causalMetadata.append(version)
+            if isDeleting:
+                message = {
+                    "message": "Deleted successfully",
+                    "version": version,
+                    "causal-metadata": causalMetadata,
+                    "shard-id": jsonpickle.encode(native_shard_id)
+                }
+                return JSONResponse(message,
+                                    status_code=200,
+                                    background=task,
+                                    media_type='application/json')
+            else:
+                message = {
+                    "message": "Error in DELETE",
+                    "error": "Key does not exist"
+                }
+                return JSONResponse(message,
+                                    status_code=404,
+                                    media_type='application/json')
 
     # Get Handler for key value store endpoint
     #   returns to the client with the current state of the key
@@ -577,13 +610,12 @@ def getShardIds(self):
 
 # Return the Replica Group ID that this process belongs to.
 @app.route('/key-value-store-shard/node-shard-id')
-class ShardMembers:
-    async def get(self):
-        logging.debug("Shard ID to be returned: %s",native_shard_id)
-        message = {
-            "message": "Shard ID of the node retrieved successfully", 
-            "shard-id": native_shard_id}
-        return JSONResponse(message,status_code=200,media_type='application/json')
+def getNodeID(self):
+    logging.debug("Shard ID to be returned: %s",native_shard_id)
+    message = {
+        "message": "Shard ID of the node retrieved successfully", 
+        "shard-id": native_shard_id}
+    return JSONResponse(message,status_code=200,media_type='application/json')
     
 
 @app.route('/key-value-store-shard/shard-id-members/{shard}')
@@ -599,14 +631,12 @@ class Members(HTTPEndpoint):
         return JSONResponse(message,status_code=200,media_type='application/json')
 
 
-@app.route('/key-value-store-shard/shard-id-key-count/{shard}')
-class KeyCount(HTTPEndpoint):
-     async def get(self,request):
-        shard = int(request.path_params['shard'])
-        logging.debug("returning shard key count of %s",groupList[shard].getCountOfKeys())
-        message = {"message": "Key count of shard ID retrieved successfully",
-                "shard-id-key-count": groupList[shard].getCountOfKeys()}
-        return JSONResponse(message,status_code=200,media_type='application/json')
+@app.route('/key-value-store-shard/shard-id-key-count/{id}')
+def getNumKeys(request):
+    message = {"message": "Key count of shard ID retrieved successfully",
+               "shard-id-key-count": len(kvstorage.kvs)}
+               #groupList[native_shard_id].shard_count
+    return JSONResponse(message,status_code=200,media_type='application/json')
 
 @app.route('/history/')
 class Hist(HTTPEndpoint):
@@ -689,7 +719,7 @@ class Correct(HTTPEndpoint):
 
 @app.route('/key-value-store-shard/reshard')
 class Reshard(HTTPEndpoint):
-   async def put(self, request):
+    async def put(self, request):
         global shardIDs
         global idList
         global groupList
@@ -706,23 +736,18 @@ class Reshard(HTTPEndpoint):
                 return JSONResponse(message, status_code=400, media_type='application/json')
         else:
             # add a new ReplicaGroup to groupList
-            for group in groupList:
-                logging.debug("Group %s:%s before rotation", group.getShardID(),
-                              group.getMembers())
             group = "group" + str(newIndex)
             tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
             logging.debug(group + " hashed to "+str(tempGroupID))
             newShard = shard.ReplicaGroup(newIndex, tempGroupID, 0, [], 0, {})
             groupList.append(newShard)
             logging.debug("Added new shard to groupList.")
-           
-            idList.append(str(newIndex))
-            shardIDs = ",".join(idList)
+            shardIDs += str(newIndex)
+            idList.append(newIndex)
+
             # tell other replicas in our VIEW to add the new Replica Group to their GroupList
             logging.debug("Added index %s to id list.", newIndex)
-            for i,v in enumerate(view):
-                logging.debug("Broadcasting add-shard to %s%s/add-shard/%s",BASE,view[i],newIndex)
-            rs = (grequests.put(BASE +str(address)+ '/add-shard/'+str(newIndex),
+            rs = (grequests.put(BASE + address+ '/add-shard/'+str(newIndex),
                                 )for address in view)
             grequests.map(rs)
 
@@ -732,46 +757,38 @@ class Reshard(HTTPEndpoint):
                     logging.debug("Group %s before removal: %s",
                                     group.getShardID(), group.getMembers())
                     tempIP = group.shard_id_members.pop(0)
-                    logging.debug("%s removed from group %s",
+                    logging.debug("%s removed from group ",
                                     tempIP, group.getShardID())
                     groupList[newIndex].addGroupMember(tempIP)
                     logging.debug("Added %s to group %s.", tempIP,
                                     groupList[newIndex].getShardID())
-            for group in groupList:
-                logging.debug("Group %s after rotation:%s",group.getShardID(),group.getMembers())
-            message = {
-                    "message":"Resharding done successfully"}
-            return JSONResponse(message, status_code=200, media_type='application/json')
 
 
 
 @app.route('/add-shard/{index}')
 class Build(HTTPEndpoint):
-   async def put(self, request):
-       global groupList
-       global shardIDs
-       global idList
-       logging.debug("Inside add-shard at: %s",OWN_SOCKET)
-       data = await request.json()
-       index = request.path_params['index']
-       logging.debug("Adding shard %s",index)
-       #newAddress = data['socket-address']
-       #groupList[int(theShard)].addGroupMember(newAddress)
-       group = "group" + str(index)
-       tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
-       logging.debug(group+" hashed to "+str(tempGroupID))
-       newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
-       groupList.append(newShard)
-       idList.append(newShard)
-       shardIDs = ",".join(idList)
+    async def put(self, request):
+        global groupList
+        data = await request.json()
+        index = request.path_params['index']
+        #newAddress = data['socket-address']
+        #groupList[int(theShard)].addGroupMember(newAddress)
+        group = "group" + str(index)
+        tempGroupID = zlib.crc32(group.encode('utf-8'), 0)
+        logging.debug("Group "+str(i)+" hashed to "+str(tempGroupID))
+        newShard = shard.ReplicaGroup(index, tempGroupID, 0, [], 0, {})
+        groupList.append(newShard)
+        newShardIndex = len(list)
+        shardIDs += str(newShardIndex)
+        idList.append(newShardIndex)
 
-       for i, group in enumerate(groupList):
-           if i != index and len(group.getMembers()) > 2:
-               tempIP = group.shard_id_members.pop(0)
-               groupList[index].addGroupMember(tempIP)
+        for i, group in enumerate(groupList):
+            if i != index and len(group.getMembers()) > 2:
+                tempIP = group.shard_id_members.pop(0)
+                groupList[newShardIndex].addGroupMember(tempIP)
 
-       message = {"message": "Added new member."}
-       return JSONResponse(message, status_code=200, media_type='application/json')
+        message = {"message": "Added new member."}
+        return JSONResponse(message, status_code=200, media_type='application/json')
 
 
 
