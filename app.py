@@ -105,7 +105,7 @@ async def forwarding(key, vs, isFromClient, reqType):
             logging.error("forwarding reqType invalid!!!")
         grequests.map(rs, exception_handler=exception_handler,
                       gtimeout=TIMEOUT_TIME)
-        logging.debug("putforwarding Finished")
+        logging.debug("forwarding Finished")
     else:
         logging.debug(
             "request is from a replica (not a client), not forwardinging")
@@ -826,8 +826,9 @@ class KeySet(HTTPEndpoint):
         alist = groupList[native_shard_id].getMembers().copy()
         if OWN_SOCKET in alist:
             alist.remove(OWN_SOCKET)
-        kvsreq = (grequests.get(BASE + address  + '/set-key/', json = data) for address in alist )
-        grequests.map(kvsreq)
+        if  (OWN_SOCKET == groupList[native_shard_id].getMembers()[0]):
+            kvsreq = (grequests.get(BASE + address  + '/set-key/', json = data) for address in alist )
+            grequests.map(kvsreq)
 
         message = {'kvs': jsonpickle.encode(delKeys)}
         return JSONResponse(message, status_code=200, media_type='application/json')
