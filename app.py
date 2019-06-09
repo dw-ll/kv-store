@@ -701,7 +701,7 @@ class MemList(HTTPEndpoint):
 
 @app.route('/key-value-store-shard/reshard')
 class Reshard(HTTPEndpoint):
-   async def put(self, request):
+    async def put(self, request):
         global shardIDs
         global idList
         global groupList
@@ -730,6 +730,7 @@ class Reshard(HTTPEndpoint):
 
             idList.append(str(newIndex))
             shardIDs = ",".join(idList)
+
             # tell other replicas in our VIEW to add the new Replica Group to their GroupList
             logging.debug("Added index %s to id list.", newIndex)
             for i, v in enumerate(view):
@@ -753,6 +754,18 @@ class Reshard(HTTPEndpoint):
             for group in groupList:
                 logging.debug("Group %s after rotation:%s",
                               group.getShardID(), group.getMembers())
+
+            kvsaddr = groupList[native_shard_id + 1].shard_id_members[0]
+            kvsmsg = {'shard-hash': groupList[native_shard_id].getHashID()}
+            kvsreq = grequests.get(BASE + str(kvsaddr)  + '/set-key/', json = kvsmsg)
+            temp = grequests.map([kvsreq])
+            newKVSdata = temp[0].json()
+            kvstorage.kvs = jsonpickle.decode(newKVSdata['kvs'])
+
+            groupList[native_shard_id].key_count = len(kvstorage.kvs)
+            await forwarding(None, None, True, reqType="HISTORY")
+
+
             message = {
                 "message": "Resharding done successfully"}
             return JSONResponse(message, status_code=200, media_type='application/json')
@@ -791,6 +804,32 @@ class Build(HTTPEndpoint):
                               group.getShardID(), group.getMembers())
 
         message = {"message": "Added new member."}
+        return JSONResponse(message, status_code=200, media_type='application/json')
+
+@app.route('/set-key/')
+class KeySet(HTTPEndpoint):
+    async def get(self, request):
+        data = await request.json()
+        shardHash = data['shard-hash']
+
+        delKeys = {}
+        for k in kvstorage.kvs:
+            key = zlib.crc32(k.encode('utf-8'))
+            if key < shardHash:
+                delKeys[k] = kvstorage.kvs[k]
+        # delete keys
+        all(map(kvstorage.kvs.pop, delKeys))
+
+        groupList[native_shard_id].key_count = len(kvstorage.kvs)
+        await forwarding(None, None, True, reqType="HISTORY")
+        # delete keys from replicas
+        alist = groupList[native_shard_id].getMembers().copy()
+        if OWN_SOCKET in alist:
+            alist.remove(OWN_SOCKET)
+        kvsreq = (grequests.get(BASE + address  + '/set-key/', json = data) for address in alist )
+        grequests.map(kvsreq)
+
+        message = {'kvs': jsonpickle.encode(delKeys)}
         return JSONResponse(message, status_code=200, media_type='application/json')
 
 
