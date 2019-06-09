@@ -97,6 +97,7 @@ async def forwarding(key, vs, isFromClient, reqType):
             rs = (grequests.put(BASE + address + VIEW_ENDPOINT,
                                 json={'socket-address': vs}) for address in view)
         elif reqType == "HISTORY":
+            logging.debug("sending history with keycout %s", len(kvstorage.kvs))
             rs = (grequests.put(BASE + address + "/history/",
                                 json={'history': vs,
                                       'shard-id': native_shard_id,
@@ -820,15 +821,17 @@ class KeySet(HTTPEndpoint):
         # delete keys
         all(map(kvstorage.kvs.pop, delKeys))
 
-        groupList[native_shard_id].key_count = len(kvstorage.kvs)
-        await forwarding(None, None, True, reqType="HISTORY")
         # delete keys from replicas
         alist = groupList[native_shard_id].getMembers().copy()
         if OWN_SOCKET in alist:
             alist.remove(OWN_SOCKET)
         if  (OWN_SOCKET == groupList[native_shard_id].getMembers()[0]):
+            logging.debug("this should only run on one replcia")
             kvsreq = (grequests.get(BASE + address  + '/set-key/', json = data) for address in alist )
             grequests.map(kvsreq)
+            
+        groupList[native_shard_id].key_count = len(kvstorage.kvs)
+        await forwarding(None, None, True, reqType="HISTORY")
 
         message = {'kvs': jsonpickle.encode(delKeys)}
         return JSONResponse(message, status_code=200, media_type='application/json')
